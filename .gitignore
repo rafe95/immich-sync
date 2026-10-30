@@ -1,0 +1,26 @@
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+coverage/
+
+# Secrets and local environment (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Production docker compose database data
+postgres/
+
+# Logs
+*.log
+
+# Editor / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Private product specification (not published)
+SPEC.md

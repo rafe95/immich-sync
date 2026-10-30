@@ -1,0 +1,19 @@
+{
+  "name": "immich-sync",
+  "private": true,
+  "type": "module",
+  "workspaces": ["core", "backend", "frontend"],
+  "scripts": {
+    "dev": "bun run --filter @immich-sync/backend --filter @immich-sync/frontend dev",
+    "build": "bun run --filter @immich-sync/frontend build",
+    "start": "bun run --filter @immich-sync/backend start",
+    "test": "bun test",
+    "typecheck": "bun run --filter '*' typecheck",
+    "db:up": "docker compose -f docker-compose.dev.yml up -d",
+    "db:down": "docker compose -f docker-compose.dev.yml down"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "typescript": "6.0.3"
+  }
+}

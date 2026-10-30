@@ -1,0 +1,34 @@
+# Immich Sync: the app plus its PostgreSQL database.
+# 1. cp .env.example .env and fill in the three secrets
+# 2. docker compose up -d --build
+# 3. open http://localhost:8080
+services:
+  app:
+    build: .
+    image: immich-sync:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080" # localhost only; see README before exposing it
+    environment:
+      TZ: ${TZ:-Europe/Lisbon}
+      DATABASE_URL: postgres://immich_sync:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/immich_sync
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env} # encrypts stored API keys
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: immich_sync
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: immich_sync
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U immich_sync -d immich_sync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

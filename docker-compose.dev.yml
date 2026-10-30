@@ -1,0 +1,20 @@
+# Development database only (the app runs with `bun run dev`).
+# bun run db:up / bun run db:down
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: immich_sync
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: immich_sync
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - immich-sync-dev-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U immich_sync -d immich_sync"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  immich-sync-dev-db:

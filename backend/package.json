@@ -1,0 +1,14 @@
+{
+  "name": "@immich-sync/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --env-file=../.env --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@immich-sync/core": "workspace:*"
+  }
+}
