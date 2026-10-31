@@ -63,7 +63,7 @@ describe("jobs API", () => {
     expect(unknown.status).toBe(400);
     expect(JSON.stringify(await unknown.json())).toContain("does not exist");
     expect((await post(t.job({ steps: [{ operation: "purge", sourceId: t.A, targetId: t.B }] }))).status).toBe(400);
-    expect((await post(t.job({ steps: [{ operation: "copy", sourceId: t.A, targetId: t.B, options: { range: { from: "2024-01-01" } } }] }))).status).toBe(400);
+    expect((await post(t.job({ steps: [{ operation: "copy", sourceId: t.A, targetId: t.B, options: { range: {} } }] }))).status).toBe(400);
     expect((await post({ name: "x" })).status).toBe(400);
     expect((await t.call("PATCH", `/api/jobs/${crypto.randomUUID()}`, { name: "x" })).status).toBe(404);
     expect(await t.jobStore.list()).toEqual([]);
