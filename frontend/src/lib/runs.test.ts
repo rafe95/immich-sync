@@ -8,12 +8,20 @@ const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
 const ev = (id: number, over: Partial<RunEvent> = {}): RunEvent => ({ id, runId: "r", ts: "2026-01-01T00:00:00Z", level: "info", type: "log", message: `m${id}`, data: null, ...over });
 
-test("form validation: same instance, window needs to", () => {
+test("form validation: same instance, a window needs from or to (either one is enough)", () => {
   expect(validateForm({ ...defaultForm(), sourceId: A, targetId: A })).toContain("Source and target must be different instances.");
   const f = { ...defaultForm(), sourceId: A, targetId: B, rangeMode: "window" as const, from: "2024-01-01" };
-  expect(validateForm(f).join()).toContain("to date is required");
+  expect(validateForm(f)).toEqual([]);
+  expect(validateForm({ ...f, from: "" }).join()).toContain("from date, a to date, or both");
+  expect(validateForm({ ...f, from: "", to: "2024-02-01" })).toEqual([]);
   expect(validateForm({ ...f, to: "2023-01-01" }).join()).toContain("must not be after");
   expect(validateForm({ ...f, to: "2024-02-01" })).toEqual([]);
+});
+
+test("body builder: a from-only window sends no to", () => {
+  const r = buildRunBody({ ...defaultForm(), sourceId: A, targetId: B, rangeMode: "window", from: "2024-01-01" });
+  if (!r.ok) throw new Error("expected ok");
+  expect((r.body.steps as any[])[0].options.range).toEqual({ from: "2024-01-01" });
 });
 
 test("body builder: window, sync_metadata forces metadata, dry run override", () => {

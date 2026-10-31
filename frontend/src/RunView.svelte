@@ -104,7 +104,7 @@
       {#each run.settings.steps as s (s.position)}
         <p class="text-sm">
           Step {s.position}: {operationLabel(s.operation)} from <strong>{s.source.alias}</strong> to <strong>{s.target.alias}</strong>
-          · {s.options.range ? ("lastDays" in s.options.range ? `last ${s.options.range.lastDays} days` : `${"from" in s.options.range && s.options.range.from ? s.options.range.from : "beginning"} to ${s.options.range.to}`) : "all dates"}
+          · {s.options.range ? ("lastDays" in s.options.range ? `last ${s.options.range.lastDays} days` : `${"from" in s.options.range && s.options.range.from ? s.options.range.from : "beginning"} to ${"to" in s.options.range && s.options.range.to ? s.options.range.to : "now"}`) : "all dates"}
           · {s.options.kind}{s.operation === "sync_metadata" ? "" : s.options.metadata ? " · with metadata" : " · without metadata"}
           {#if s.options.dryRun}· <em>dry run: no changes on either server</em>{/if}
         </p>

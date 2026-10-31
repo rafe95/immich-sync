@@ -19,7 +19,8 @@ export type TransferPlanOptions = {
   operation: "copy" | "move";
   kind?: "all" | "photos" | "videos";
   /** A date-taken window; omitting it includes all eligible dates. */
-  range?: { from?: string; to: string };
+  /** Date-taken window; either end may be left out. Plain dates (2024-01-31) are read as UTC days, `to` inclusive. */
+  range?: { from?: string; to?: string };
   /**
    * Plan for a standalone metadata sync (sync_metadata), which classifies assets but never uploads or
    * downloads. The instance checks then require only metadataSyncPermissions (source read; target read
@@ -108,17 +109,32 @@ function validateOptions(options: TransferPlanOptions): void {
   if (options.kind && !["all", "photos", "videos"].includes(options.kind)) {
     throw new TransferPlanError("Kind must be all, photos or videos.");
   }
-  if (options.range) {
-    const { from, to } = options.range;
-    const toTime = Date.parse(to);
-    const fromTime = from === undefined ? null : Date.parse(from);
-    if (!Number.isFinite(toTime) || (fromTime !== null && !Number.isFinite(fromTime))) {
-      throw new TransferPlanError("Date range must contain valid ISO date values.");
-    }
-    if (fromTime !== null && fromTime > toTime) {
-      throw new TransferPlanError("Date range start must not be after its end.");
-    }
+  normalizeRange(options.range);
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Immich only accepts full ISO 8601 datetimes with a time zone in search filters, so plain dates are expanded:
+ * a start date is the beginning of that UTC day and an end date the end of that UTC day (inclusive).
+ */
+export function normalizeRange(range: TransferPlanOptions["range"]): { from?: string; to?: string } | undefined {
+  if (!range) return undefined;
+  const boundary = (value: string | undefined, edge: "start" | "end"): string | undefined => {
+    if (value === undefined) return undefined;
+    const text = value.trim();
+    const time = Date.parse(DATE_ONLY.test(text) ? `${text}T00:00:00.000Z` : text);
+    if (!Number.isFinite(time)) throw new TransferPlanError("Date range must contain valid ISO date values.");
+    if (DATE_ONLY.test(text)) return edge === "start" ? `${text}T00:00:00.000Z` : `${text}T23:59:59.999Z`;
+    return new Date(time).toISOString();
+  };
+  const from = boundary(range.from, "start");
+  const to = boundary(range.to, "end");
+  if (from === undefined && to === undefined) throw new TransferPlanError("Date range needs a start date, an end date, or both.");
+  if (from !== undefined && to !== undefined && Date.parse(from) > Date.parse(to)) {
+    throw new TransferPlanError("Date range start must not be after its end.");
   }
+  return { ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) };
 }
 
 function normalizedApiUrl(apiUrl: string): string {
@@ -178,7 +194,7 @@ function searchFilter(
     visibility: { eq: visibility },
     type: { eq: type },
     ...(range
-      ? { takenAt: { ...(range.from ? { gte: range.from } : {}), lte: range.to } }
+      ? { takenAt: { ...(range.from ? { gte: range.from } : {}), ...(range.to ? { lte: range.to } : {}) } }
       : {}),
   };
 }
@@ -333,7 +349,7 @@ export async function planTransfer(options: TransferPlanOptions): Promise<Transf
 
   let sourceAssets: AssetResponseDto[];
   try {
-    sourceAssets = await discoverSourceAssets(options.source, kind, options.range);
+    sourceAssets = await discoverSourceAssets(options.source, kind, normalizeRange(options.range));
   } catch (error) {
     if (error instanceof TransferPlanError) throw error;
     if (error instanceof AssetSearchError) throw new TransferPlanError(error.message);

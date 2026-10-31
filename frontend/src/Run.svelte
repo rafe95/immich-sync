@@ -90,7 +90,7 @@
 
   const summary = $derived(
     `${operationLabel(form.operation)} ${form.kind === "all" ? "photos and videos" : form.kind} from ${source?.alias ?? "…"} to ${target?.alias ?? "…"}, ` +
-      (form.rangeMode === "all" ? "all dates" : `taken ${form.from ? `from ${form.from} ` : "up to "}${form.from ? "to " : ""}${form.to || "…"}`) +
+      (form.rangeMode === "all" ? "all dates" : `taken ${form.from ? `from ${form.from}` : ""}${form.from && form.to ? " " : ""}${form.to ? `${form.from ? "to" : "up to"} ${form.to}` : form.from ? "onwards" : ""}`) +
       (form.operation === "sync_metadata" ? ", metadata only" : form.metadata ? ", with metadata" : ", without metadata") +
       (form.dryRun ? ". Dry run: nothing will change." : "."),
   );
@@ -151,8 +151,9 @@
         {#if form.rangeMode === "window"}
           <div class="grid gap-4 sm:grid-cols-2">
             <label class="label"><span class="label-text">From (optional)</span><input class="input" type="date" bind:value={form.from} /></label>
-            <label class="label"><span class="label-text">To (required)</span><input class="input" type="date" bind:value={form.to} required /></label>
+            <label class="label"><span class="label-text">To (optional)</span><input class="input" type="date" bind:value={form.to} /></label>
           </div>
+          <p class="text-sm opacity-70">Set one or both. Dates are date taken, in UTC, and the to date is included in full.</p>
         {/if}
       </fieldset>
 

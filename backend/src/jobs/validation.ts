@@ -10,7 +10,7 @@ export type OnFailure = "continue" | "stop";
 export type OnError = "stop" | "continue";
 export type StepKind = "all" | "photos" | "videos";
 
-export type StepRange = { from?: string; to: string } | { lastDays: number } | null;
+export type StepRange = { from?: string; to?: string } | { lastDays: number } | null;
 
 /** Normalised per-step options; every key is always present. `range: null` means all assets. */
 export type StepOptions = {
@@ -68,13 +68,14 @@ export function normalizeOptions(raw: unknown, operation: Operation, label: stri
       else out.range = { lastDays: n };
     } else {
       for (const key of Object.keys(range)) if (key !== "from" && key !== "to") problems.push(`${label}: unknown range field "${key}".`);
-      const hasFrom = range.from !== undefined && range.from !== null;
-      if (range.to === undefined || range.to === null) problems.push(`${label}: range.to is required (from is optional, to is not).`);
+      const hasFrom = range.from !== undefined && range.from !== null && range.from !== "";
+      const hasTo = range.to !== undefined && range.to !== null && range.to !== "";
+      if (!hasFrom && !hasTo) problems.push(`${label}: a date range needs a from date, a to date, or both.`);
       else {
-        const to = parseDate(range.to, `${label}: range.to`, problems);
         const from = hasFrom ? parseDate(range.from, `${label}: range.from`, problems) : undefined;
-        if (to && from && Date.parse(from) > Date.parse(to)) problems.push(`${label}: range.from must not be after range.to.`);
-        if (to && (!hasFrom || from)) out.range = from ? { from, to } : { to };
+        const to = hasTo ? parseDate(range.to, `${label}: range.to`, problems) : undefined;
+        if (from && to && Date.parse(from) > Date.parse(to)) problems.push(`${label}: range.from must not be after range.to.`);
+        if ((!hasFrom || from) && (!hasTo || to)) out.range = { ...(from ? { from } : {}), ...(to ? { to } : {}) };
       }
     }
   }

@@ -175,6 +175,18 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
             statusCode: 400,
           }, 400);
         }
+        // Like Immich v3.3.5: date filters must be full ISO 8601 datetimes with a time zone (not plain dates).
+        const strictDatetime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+        for (const edge of ["gte", "lte"] as const) {
+          const value = search.filter?.takenAt?.[edge];
+          if (value !== undefined && !strictDatetime.test(value)) {
+            return json({
+              message: "Validation failed",
+              errors: [{ code: "invalid_format", format: "datetime", path: ["filter", "takenAt", edge], message: "Invalid input: expected ISO 8601 datetime string" }],
+              statusCode: 400,
+            }, 400);
+          }
+        }
         const checksum = search.filter?.checksum?.eq;
         options.onMetadataSearch?.(checksum);
         if (checksum && options.searchErrorChecksums?.includes(checksum)) {

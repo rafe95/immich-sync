@@ -117,7 +117,7 @@ export type StepOptions = {
   source: Instance;
   target: Instance;
   operation: StepOperation;
-  range?: { from?: string; to: string };
+  range?: { from?: string; to?: string };
   kind?: "all" | "photos" | "videos";
   /** copy/move: also sync metadata fields. Implied (and required) for sync_metadata. Default false. */
   metadata?: boolean;

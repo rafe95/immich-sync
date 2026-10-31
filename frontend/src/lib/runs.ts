@@ -17,7 +17,7 @@ export type RunStepSettings = {
   operation: Operation;
   source: { id: string; alias: string };
   target: { id: string; alias: string };
-  options: { range: { from?: string; to: string } | { lastDays: number } | null; kind: Kind; metadata: boolean; dryRun: boolean };
+  options: { range: { from?: string; to?: string } | { lastDays: number } | null; kind: Kind; metadata: boolean; dryRun: boolean };
 };
 export type Run = {
   id: string;
@@ -67,9 +67,9 @@ export function validateForm(f: RunForm): string[] {
   if (!f.targetId) p.push("Choose a target instance.");
   if (f.sourceId && f.sourceId === f.targetId) p.push("Source and target must be different instances.");
   if (f.rangeMode === "window") {
+    if (!f.from && !f.to) p.push("Set a from date, a to date, or both (or choose all assets).");
     if (f.from && !DATE.test(f.from)) p.push("The from date is not a valid date.");
-    if (!f.to) p.push(f.from ? "A to date is required when a from date is set." : "A to date is required for a date window.");
-    else if (!DATE.test(f.to)) p.push("The to date is not a valid date.");
+    if (f.to && !DATE.test(f.to)) p.push("The to date is not a valid date.");
     if (f.from && f.to && DATE.test(f.from) && DATE.test(f.to) && f.from > f.to) p.push("The from date must not be after the to date.");
   }
   return p;
@@ -86,7 +86,7 @@ export function buildRunBody(
 ): { ok: true; body: Record<string, unknown> } | { ok: false; problems: string[] } {
   const problems = validateForm(f);
   if (problems.length) return { ok: false, problems };
-  const range = f.rangeMode === "window" ? { ...(f.from ? { from: f.from } : {}), to: f.to } : null;
+  const range = f.rangeMode === "window" ? { ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}) } : null;
   const dryRun = overrideDryRun ?? f.dryRun;
   return {
     ok: true,
@@ -117,7 +117,7 @@ export function formFromRun(run: Run): RunForm | null {
     targetId: s.target.id,
     rangeMode: r ? "window" : "all",
     from: r && "from" in r ? (r.from ?? "") : "",
-    to: r && "to" in r ? r.to : "",
+    to: r && "to" in r ? (r.to ?? "") : "",
     kind: s.options.kind,
     metadata: s.options.metadata,
     dryRun: false,

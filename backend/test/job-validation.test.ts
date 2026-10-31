@@ -41,12 +41,14 @@ describe("job validation", () => {
     expect(problemsOf(() => validateJobInput(job([step({ onError: "ignore" })]))).join()).toContain("onError");
   });
 
-  test("range: to is required with from; from must not follow to; lastDays is exclusive", () => {
+  test("range: either end may be left out, but not both; from must not follow to; lastDays is exclusive", () => {
     const opt = (options: unknown) => () => validateJobInput(job([step({ options })]));
     expect(validateJobInput(job([step({ options: { range: { from: "2024-01-01", to: "2024-02-01" } } })])).steps![0]!.options.range).toEqual({ from: "2024-01-01", to: "2024-02-01" });
     expect(validateJobInput(job([step({ options: { range: { to: "2024-02-01T00:00:00Z" } } })])).steps![0]!.options.range).toEqual({ to: "2024-02-01T00:00:00Z" });
     expect(validateJobInput(job([step({ options: { range: { lastDays: 30 } } })])).steps![0]!.options.range).toEqual({ lastDays: 30 });
-    expect(problemsOf(opt({ range: { from: "2024-01-01" } })).join()).toContain("range.to is required");
+    expect(validateJobInput(job([step({ options: { range: { from: "2024-01-01" } } })])).steps![0]!.options.range).toEqual({ from: "2024-01-01" });
+    expect(validateJobInput(job([step({ options: { range: { from: "2024-01-01", to: "" } } })])).steps![0]!.options.range).toEqual({ from: "2024-01-01" });
+    expect(problemsOf(opt({ range: {} })).join()).toContain("needs a from date, a to date, or both");
     expect(problemsOf(opt({ range: { from: "2024-03-01", to: "2024-02-01" } })).join()).toContain("after");
     expect(problemsOf(opt({ range: { from: "nope", to: "2024-02-01" } })).join()).toContain("ISO date");
     expect(problemsOf(opt({ range: { lastDays: 0 } })).join()).toContain("lastDays");

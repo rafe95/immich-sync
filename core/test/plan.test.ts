@@ -143,6 +143,35 @@ describe("planTransfer", () => {
     );
   });
 
+  test("plain dates are expanded to UTC day boundaries and either end may be left out", async () => {
+    const taken = (iso: string) => ({ exifInfo: { dateTimeOriginal: iso, fileSizeInByte: 1 } });
+    const source = fake({
+      assets: [
+        asset("before", taken("2026-04-30T23:59:59.000Z")),
+        asset("first-day", taken("2026-05-01T00:00:00.000Z")),
+        asset("last-day", taken("2026-05-31T23:59:59.000Z")),
+        asset("after", taken("2026-06-01T00:00:00.000Z")),
+      ],
+    });
+    const target = fake();
+    const ids = async (range: TransferPlanOptions["range"]) =>
+      (await planTransfer(options(source, target, { range }))).assets.map((item) => item.id).sort();
+
+    expect(await ids({ from: "2026-05-01", to: "2026-05-31" })).toEqual(["first-day", "last-day"]);
+    expect(await ids({ from: "2026-05-01" })).toEqual(["after", "first-day", "last-day"]);
+    expect(await ids({ to: "2026-05-01" })).toEqual(["before", "first-day"]);
+    expect(await ids({ from: "2026-05-01T00:00:00+00:00", to: "2026-05-31T23:59:59.999Z" })).toEqual(["first-day", "last-day"]);
+  });
+
+  test("an empty or reversed date range is refused", async () => {
+    const source = fake();
+    const target = fake();
+
+    await expect(planTransfer(options(source, target, { range: {} }))).rejects.toThrow("needs a start date, an end date, or both");
+    await expect(planTransfer(options(source, target, { range: { from: "2026-06-01", to: "2026-05-01" } }))).rejects.toThrow("must not be after");
+    await expect(planTransfer(options(source, target, { range: { from: "nope" } }))).rejects.toThrow("valid ISO date");
+  });
+
   test("a target lookup failure is isolated to its asset and the preview continues", async () => {
     const source = fake({ assets: [asset("failure"), asset("success")] });
     const target = fake({ searchErrorChecksums: ["checksum-failure"] });

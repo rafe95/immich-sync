@@ -99,7 +99,7 @@ export function rolesFor(step: RunSettingsStep): { source: Role[]; target: Role[
 }
 
 /** Converts a step's stored range ("last N days" is relative to the run time) to core's {from?, to}. */
-export function coreRange(range: RunSettingsStep["options"]["range"], now: Date): { from?: string; to: string } | undefined {
+export function coreRange(range: RunSettingsStep["options"]["range"], now: Date): { from?: string; to?: string } | undefined {
   if (!range) return undefined;
   if ("lastDays" in range) return { from: new Date(now.getTime() - range.lastDays * 86_400_000).toISOString(), to: now.toISOString() };
   return range;
