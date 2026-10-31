@@ -172,6 +172,9 @@ export function pgUserStore(sql: SQL): UserStore {
           const [{ n }] = await tx.unsafe(`select count(*)::int as n from users`);
           if (n > 0) return null;
           const [r] = await tx.unsafe(`insert into users (username, role, password_hash) values ($1, 'admin', $2) returning ${COLS}`, [username.toLowerCase(), hash]);
+          await tx.unsafe(`update instances set owner_id = $1 where owner_id is null`, [r.id]);
+          await tx.unsafe(`update jobs set owner_id = $1 where owner_id is null`, [r.id]);
+          await tx.unsafe(`update runs set owner_id = $1 where owner_id is null`, [r.id]);
           return toUser(r);
         });
       } catch (err) {

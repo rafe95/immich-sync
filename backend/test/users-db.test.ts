@@ -154,9 +154,34 @@ describe.skipIf(!url)("users (PostgreSQL)", () => {
     await sql!`delete from users`;
   });
 
+  test("setup assigns ownerless rows to the first admin", async () => {
+    const users = pgUserStore(sql!);
+    try {
+      const [instance] = await sql!`insert into instances (alias, api_url, api_key_enc) values ('legacy', 'http://legacy/api', ${Buffer.from("encrypted")}) returning id`;
+      const [job] = await sql!`insert into jobs (name) values ('legacy job') returning id`;
+      const [run] = await sql!`insert into runs (job_id, job_name, trigger, started_by, settings) values (${job.id}, 'legacy job', 'manual', 'admin', '{}') returning id`;
+      const first = await users.createFirstAdmin("new-admin", "h");
+      expect(first).not.toBeNull();
+      const owners = async () => ({
+        instance: (await sql!`select owner_id from instances where id = ${instance.id}`)[0].owner_id,
+        job: (await sql!`select owner_id from jobs where id = ${job.id}`)[0].owner_id,
+        run: (await sql!`select owner_id from runs where id = ${run.id}`)[0].owner_id,
+      });
+      expect(await owners()).toEqual({ instance: first!.id, job: first!.id, run: first!.id });
+      const [later] = await sql!`insert into jobs (name) values ('later ownerless') returning id`;
+      expect(await users.createFirstAdmin("second-admin", "h")).toBeNull();
+      expect(await owners()).toEqual({ instance: first!.id, job: first!.id, run: first!.id });
+      expect((await sql!`select owner_id from jobs where id = ${later.id}`)[0].owner_id).toBeNull();
+      expect(await users.count()).toBe(1);
+    } finally {
+      await sql!.unsafe(`delete from runs; delete from jobs; delete from instances; delete from users`);
+    }
+  });
+
   test("setup race over HTTP: concurrent requests create exactly one admin", async () => {
     const t = startTestServer({ users: pgUserStore(sql!), sessions: pgSessionStore(sql!), seedAdmin: false });
     try {
+      const [legacy] = await sql!`insert into jobs (name) values ('race legacy') returning id`;
       const results = await Promise.all(
         Array.from({ length: 10 }, (_, i) =>
           fetch(`${t.base}/api/setup`, { method: "POST", body: JSON.stringify({ username: `racer${i}`, password: LONG }) }),
@@ -167,13 +192,15 @@ describe.skipIf(!url)("users (PostgreSQL)", () => {
       expect(statuses.filter((s) => s === 409)).toHaveLength(9);
       const [{ n }] = await sql!`select count(*)::int as n from users`;
       expect(n).toBe(1);
+      const [winner] = await sql!`select id from users`;
+      expect((await sql!`select owner_id from jobs where id = ${legacy.id}`)[0].owner_id).toBe(winner.id);
       const [{ s }] = await sql!`select count(*)::int as s from sessions`;
       expect(s).toBe(1);
       expect(await (await fetch(`${t.base}/api/setup/status`)).json()).toEqual({ needsSetup: false });
     } finally {
       await t.stop();
+      await sql!.unsafe(`delete from jobs; delete from users`);
     }
-    await sql!`delete from users`;
   });
 
   test("full flow on PostgreSQL: login, create user, reset password, delete user removes sessions", async () => {
