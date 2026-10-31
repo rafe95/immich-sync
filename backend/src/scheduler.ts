@@ -63,6 +63,8 @@ export function createScheduler(deps: SchedulerDeps) {
   async function fire(s: ScheduleRecord, reason: "due" | "catch-up"): Promise<"started" | "skipped"> {
     const job = await deps.jobs.system.get(s.jobId);
     if (!job) return "skipped";
+    const current = job.schedule;
+    if (!current?.enabled || current.id !== s.id || current.updatedAt !== s.updatedAt) return "skipped";
     const tag = `schedule for "${job.name}"`;
     const active = deps.runs.activeRunForJob(s.jobId);
     if (active) {
@@ -70,7 +72,7 @@ export function createScheduler(deps: SchedulerDeps) {
       await recordSkip(s.jobId, "skipped: previous run still active");
       return "skipped";
     }
-    if (hasMoveStep(job.steps) && !s.moveConfirmedAt) {
+    if (hasMoveStep(job.steps) && !current.moveConfirmedAt) {
       log("warning", `Skipped ${tag}: the job moves assets and the schedule has no move confirmation.`, { jobId: s.jobId });
       await recordSkip(s.jobId, "skipped: this job moves assets and its schedule has no move confirmation");
       return "skipped";

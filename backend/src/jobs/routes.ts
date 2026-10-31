@@ -6,6 +6,7 @@ import { isUuid } from "../instances/store.ts";
 import type { RunManager } from "../runs/manager.ts";
 import type { JobRecord, JobStore, ScheduleRecord } from "./store.ts";
 import { checkStepInstances, hasMoveStep, nextRuns, validateJobInput, validateScheduleInput } from "./validation.ts";
+import type { OwnerWriteContext } from "../auth/owner-writes.ts";
 
 export type JobRouteDeps = {
   jobs: JobStore;
@@ -18,7 +19,7 @@ export type JobRouteDeps = {
   now?: () => Date;
 };
 
-type Ctx = { user: { id: string; username: string } };
+type Ctx = { user: { id: string; username: string } } & OwnerWriteContext;
 
 /** Reads an optional JSON object body: an empty body counts as {}. */
 async function readOptionalJson(req: Request): Promise<Record<string, unknown>> {
@@ -68,8 +69,10 @@ export function createJobRoutes(deps: JobRouteDeps) {
 
     create: async (req: Request, ctx: Ctx) => {
       const input = validateJobInput(await readJsonObject(req));
-      await requireInstances(ctx.user.id, input.steps!);
-      const created = await jobs.create(ctx.user.id, { name: input.name!, steps: input.steps! });
+      const created = await ctx.write(async () => {
+        await requireInstances(ctx.user.id, input.steps!);
+        return jobs.create(ctx.user.id, { name: input.name!, steps: input.steps! });
+      });
       return json(view(created, await aliases(ctx.user.id)), 201);
     },
 
@@ -80,16 +83,19 @@ export function createJobRoutes(deps: JobRouteDeps) {
       const current = await requireJob(ctx.user.id, id);
       const patch = validateJobInput(body, { partial: true });
       if (patch.steps) await requireInstances(ctx.user.id, patch.steps);
-      const updated = await jobs.update(ctx.user.id, id, patch);
-      if (!updated) throw new HttpError(404, "Job not found.");
-      // A schedule confirmed for a job without moves must not silently start trashing assets.
-      if (patch.steps && hasMoveStep(patch.steps) && current.schedule) await jobs.revokeMoveConfirmation(ctx.user.id, id);
+      const response = await ctx.write(async () => {
+        const updated = await jobs.update(ctx.user.id, id, patch);
+        if (!updated) throw new HttpError(404, "Job not found.");
+        // A schedule confirmed for a job without moves must not silently start trashing assets.
+        if (patch.steps && hasMoveStep(patch.steps) && current.schedule) await jobs.revokeMoveConfirmation(ctx.user.id, id);
+        return json(view((await jobs.get(ctx.user.id, id))!, await aliases(ctx.user.id)));
+      });
       deps.onSchedulesChanged?.();
-      return json(view((await jobs.get(ctx.user.id, id))!, await aliases(ctx.user.id)));
+      return response;
     },
 
     remove: async (req: Request, ctx: Ctx) => {
-      if (!(await jobs.delete(ctx.user.id, idOf(req)))) throw new HttpError(404, "Job not found.");
+      if (!(await ctx.write(() => jobs.delete(ctx.user.id, idOf(req))))) throw new HttpError(404, "Job not found.");
       deps.onSchedulesChanged?.();
       return json({ deleted: true });
     },
@@ -131,14 +137,14 @@ export function createJobRoutes(deps: JobRouteDeps) {
           throw new HttpError(400, "This job moves assets, so a schedule must be confirmed explicitly: it will trash assets on the source servers on every run. Send confirmMove: true.", { confirmationRequired: true });
         }
       }
-      const saved = await jobs.upsertSchedule(ctx.user.id, id, { cron: input.cron, timezone: input.timezone, enabled: input.enabled, catchUp: input.catchUp, moveConfirmedAt: confirmedAt });
+      const saved = await ctx.write(() => jobs.upsertSchedule(ctx.user.id, id, { cron: input.cron, timezone: input.timezone, enabled: input.enabled, catchUp: input.catchUp, moveConfirmedAt: confirmedAt }));
       if (!saved) throw new HttpError(404, "Job not found.");
       deps.onSchedulesChanged?.();
       return json(scheduleView(saved), job.schedule ? 200 : 201);
     },
 
     deleteSchedule: async (req: Request, ctx: Ctx) => {
-      if (!(await jobs.deleteSchedule(ctx.user.id, idOf(req)))) throw new HttpError(404, "This job has no schedule.");
+      if (!(await ctx.write(() => jobs.deleteSchedule(ctx.user.id, idOf(req))))) throw new HttpError(404, "This job has no schedule.");
       deps.onSchedulesChanged?.();
       return json({ deleted: true });
     },

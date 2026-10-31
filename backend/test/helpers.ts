@@ -62,7 +62,7 @@ export function startTestServer(overrides: {
     dashboard: svc.dashboard,
     settings: svc.settings,
     userDeletion: {
-      jobs: jobStore,
+      ...svc.userDeletion,
       manager: svc.manager,
       eraser: overrides.eraser ?? memoryUserDataEraser({ users, instances: store, jobs: jobStore, runs: runStore } as unknown as MemoryEraserStores),
       timeoutMs: overrides.deleteTimeoutMs,

@@ -6,6 +6,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { errorResponse, HttpError, json, readJsonObject } from "../http.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
+import { ownerWritesFor, type OwnerWriteContext } from "./owner-writes.ts";
 import { memoryUserStore, passwordProblem, normalizeUsername, userView, usernameProblem, type User, type UserStore } from "./users.ts";
 import { hashToken, newToken, SESSION_TTL_MS, type Session, type SessionStore } from "./sessions.ts";
 
@@ -35,7 +36,7 @@ export function newPasswordProblem(newPassword: string, current: string): string
 export const hashPassword = (password: string) => Bun.password.hash(password, { algorithm: "argon2id" });
 
 /** The authenticated request context handed to protected handlers. */
-export type AuthContext = Session & { user: User };
+export type AuthContext = Session & { user: User } & OwnerWriteContext;
 
 export type AuthOptions = {
   /** Defaults to an in-memory store (tests). */
@@ -71,6 +72,7 @@ export function createAuth(options: AuthOptions) {
   const limiter = options.limiter ?? new LoginRateLimiter();
   const now = options.now ?? (() => new Date());
   const users = options.users ?? memoryUserStore();
+  const writes = ownerWritesFor(users);
   // Verified for unknown usernames so a login attempt takes about as long either way.
   let dummyHash: Promise<string> | null = null;
   const secureMode = options.secureCookies ?? "auto";
@@ -103,7 +105,10 @@ export function createAuth(options: AuthOptions) {
       const user = await users.get(session.userId);
       if (!user || user.deletingAt) return json({ message: "Authentication required." }, 401);
       try {
-        return await handler(req, { ...session, user });
+        return await handler(req, { ...session, user, write: (work) => writes.write(user.id, async () => {
+          const current = await users.get(user.id);
+          return !!current && !current.deletingAt;
+        }, work) });
       } catch (err) {
         if (err instanceof HttpError) return errorResponse(err);
         throw err;
@@ -127,13 +132,21 @@ export function createAuth(options: AuthOptions) {
   }
 
   async function startSession(req: Request, user: User, status = 200) {
-    const t = now();
-    await sessions.purgeExpired(t);
-    const token = newToken();
-    const session: Session = { csrfToken: newToken(), expiresAt: new Date(t.getTime() + SESSION_TTL_MS), userId: user.id };
-    await sessions.create(hashToken(token), session);
-    return json({ authenticated: true, csrfToken: session.csrfToken, user: userView(user) }, status, {
-      "set-cookie": cookie(req, token, SESSION_TTL_MS / 1000),
+    return writes.write(user.id, async () => {
+      const current = await users.get(user.id);
+      return !!current && !current.deletingAt;
+    }, async () => {
+      const t = now();
+      await sessions.purgeExpired(t);
+      const token = newToken();
+      const session: Session = { csrfToken: newToken(), expiresAt: new Date(t.getTime() + SESSION_TTL_MS), userId: user.id };
+      await sessions.create(hashToken(token), session);
+      return json({ authenticated: true, csrfToken: session.csrfToken, user: userView(user) }, status, {
+        "set-cookie": cookie(req, token, SESSION_TTL_MS / 1000),
+      });
+    }).catch((err) => {
+      if (err instanceof HttpError && err.status === 409) return json({ message: "Authentication required." }, 401);
+      throw err;
     });
   }
 
@@ -212,10 +225,13 @@ export function createAuth(options: AuthOptions) {
       limiter.recordSuccess(clientKey);
       const problem = newPasswordProblem(next, current);
       if (problem) throw new HttpError(400, problem);
-      await users.update(ctx.user.id, { hash: await hashPassword(next) });
-      // End all of this user's sessions, including this one, and hand back a fresh token and CSRF secret.
-      await sessions.deleteForUser(ctx.user.id);
-      return startSession(req, ctx.user);
+      const nextHash = await hashPassword(next);
+      return ctx.write(async () => {
+        await users.update(ctx.user.id, { hash: nextHash });
+        // End all of this user's sessions, including this one, and hand back a fresh token and CSRF secret.
+        await sessions.deleteForUser(ctx.user.id);
+        return startSession(req, ctx.user);
+      });
     });
 
   const logout = protect(async (req) => {

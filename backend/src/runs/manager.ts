@@ -42,11 +42,12 @@ export type RunManager = ReturnType<typeof createRunManager>;
 /** True when every promise settles within `timeoutMs`; never leaves a timer behind. */
 export async function settlesWithin(promises: readonly Promise<unknown>[], timeoutMs: number): Promise<boolean> {
   if (!promises.length) return true;
+  const settled = Promise.allSettled(promises).then(() => true as const);
   if (timeoutMs <= 0) return false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<false>((r) => (timer = setTimeout(() => r(false), timeoutMs)));
   try {
-    return await Promise.race([Promise.allSettled(promises).then(() => true as const), timedOut]);
+    return await Promise.race([settled, timedOut]);
   } finally {
     clearTimeout(timer);
   }
@@ -56,11 +57,26 @@ export function createRunManager(deps: RunManagerDeps) {
   const hub = deps.hub ?? new RunEventHub();
   const locks = deps.locks ?? new InstanceLockManager();
   const active = new Map<string, { controller: AbortController; done: Promise<RunStatus>; jobId: string | null; ownerId: string }>();
-  /** start() calls in flight, by owner: registered before the deleting check, removed once the run is launched (or refused). */
+  /** Run and skipped-record starts in flight, registered before checking deletion and held through persistence. */
   const starting = new Map<string, Set<Promise<void>>>();
   /** Deletion intent outlives its bounded wait, including starts still in flight when it times out. */
   const deletingOwners = new Set<string>();
   const runnerDeps = { store: deps.store, hub, executor: deps.executor, locks, throttle: new ProgressThrottle(deps.nowMs) };
+
+  async function admit<T>(ownerId: string, work: () => Promise<T>): Promise<T> {
+    let settle!: () => void;
+    const inFlight = new Promise<void>((r) => (settle = r));
+    const mine = starting.get(ownerId) ?? new Set();
+    starting.set(ownerId, mine.add(inFlight));
+    try {
+      if (deletingOwners.has(ownerId) || await deps.owners.isDeleting(ownerId)) throw new HttpError(409, "This account is being deleted.");
+      return await work();
+    } finally {
+      mine.delete(inFlight);
+      if (!mine.size && starting.get(ownerId) === mine) starting.delete(ownerId);
+      settle();
+    }
+  }
 
   async function snapshot(req: StartRequest): Promise<{ jobId: string | null; name: string; settings: RunSettings }> {
     let jobId: string | null = null;
@@ -110,22 +126,12 @@ export function createRunManager(deps: RunManagerDeps) {
 
     /** Creates the run and starts it in the background; resolves as soon as it is persisted as queued. */
     async start(req: StartRequest): Promise<RunRecord> {
-      // Registered synchronously, before the deleting check, so user deletion can wait for a start that passed it.
-      let settle!: () => void;
-      const inFlight = new Promise<void>((r) => (settle = r));
-      const mine = starting.get(req.ownerId) ?? new Set();
-      starting.set(req.ownerId, mine.add(inFlight));
-      try {
-        if (deletingOwners.has(req.ownerId) || await deps.owners.isDeleting(req.ownerId)) throw new HttpError(409, "This account is being deleted.");
+      return admit(req.ownerId, async () => {
         const { jobId, name, settings } = await snapshot(req);
         const run = await deps.store.createRun({ ownerId: req.ownerId, jobId, jobName: name, trigger: req.trigger, startedBy: req.startedBy, dryRun: settings.dryRun, settings });
         launch(run);
         return run;
-      } finally {
-        mine.delete(inFlight);
-        if (!mine.size && starting.get(req.ownerId) === mine) starting.delete(req.ownerId);
-        settle();
-      }
+      });
     },
 
     /**
@@ -135,14 +141,17 @@ export function createRunManager(deps: RunManagerDeps) {
     async recordSkipped(jobId: string, reason: string): Promise<RunRecord> {
       const job = await deps.jobs.system.get(jobId);
       if (!job) throw new HttpError(404, "Job not found.");
-      let snap: Awaited<ReturnType<typeof snapshot>>;
-      try {
-        snap = await snapshot({ job: { id: jobId }, trigger: "schedule", ownerId: job.ownerId, startedBy: "schedule", dryRun: false });
-      } catch {
-        // Instances may be gone; still record the skip.
-        snap = { jobId, name: job.name, settings: { jobId, name: job.name, dryRun: false, steps: [] } };
-      }
-      return deps.store.createSkippedRun({ ownerId: job.ownerId, jobId: snap.jobId, jobName: snap.name, settings: snap.settings, reason }, new Date());
+      return admit(job.ownerId, async () => {
+        let snap: Awaited<ReturnType<typeof snapshot>>;
+        try {
+          snap = await snapshot({ job: { id: jobId }, trigger: "schedule", ownerId: job.ownerId, startedBy: "schedule", dryRun: false });
+        } catch {
+          // Instances may be gone; still record the skip, unless deletion began during the snapshot.
+          snap = { jobId, name: job.name, settings: { jobId, name: job.name, dryRun: false, steps: [] } };
+        }
+        if (deletingOwners.has(job.ownerId) || await deps.owners.isDeleting(job.ownerId) || deletingOwners.has(job.ownerId)) throw new HttpError(409, "This account is being deleted.");
+        return deps.store.createSkippedRun({ ownerId: job.ownerId, jobId: snap.jobId, jobName: snap.name, settings: snap.settings, reason }, new Date());
+      });
     },
 
     /** Requests cancellation of an active run; false when it is not active in this process. */
@@ -168,7 +177,7 @@ export function createRunManager(deps: RunManagerDeps) {
       return ids;
     },
 
-    /** start() calls for the owner still in flight (each settles once its run is launched or refused). */
+    /** Run starts and skipped-record writes still in flight; settles only after persistence or refusal. */
     pendingStarts: (ownerId: string): Promise<void>[] => [...(starting.get(ownerId) ?? [])],
 
     /** True when every listed run has finished within `timeoutMs` (runs no longer active count as finished). */

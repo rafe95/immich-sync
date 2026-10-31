@@ -119,6 +119,8 @@
       await load();
     } catch (err) {
       notice = { kind: "error", text: msg(err) };
+      closeDelete();
+      await load();
     } finally {
       busyId = null;
     }
@@ -150,16 +152,17 @@
               <span class="font-medium">{u.username}</span>
               {#if isSelf}<span class="text-xs opacity-70">(you)</span>{/if}
               <span class="badge {u.role === 'admin' ? 'preset-tonal-primary' : 'preset-tonal-surface'}">{roleLabel(u.role)}</span>
+              {#if u.deletingAt}<span class="badge preset-tonal-warning" role="status">Deleting…</span>{/if}
               <span class="text-sm opacity-70">Last login: {lastLoginText(u.lastLoginAt)}</span>
             </div>
             <div class="flex flex-wrap items-center gap-2">
               <label class="flex items-center gap-2 text-sm">
                 <span>Role</span>
-                <select class="select w-28" value={u.role} disabled={busyId === u.id} onchange={(e) => changeRole(u, e.currentTarget.value as UserRole)} aria-label="Role for {u.username}">
+                <select class="select w-28" value={u.role} disabled={busyId !== null || !!u.deletingAt} onchange={(e) => changeRole(u, e.currentTarget.value as UserRole)} aria-label="Role for {u.username}">
                   {#each ROLES as r (r)}<option value={r}>{roleLabel(r)}</option>{/each}
                 </select>
               </label>
-              <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId === u.id}
+              <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId !== null || !!u.deletingAt}
                 onclick={() => { resetId = resetId === u.id ? null : u.id; resetPw = ""; resetProblem = null; closeDelete(); }}
                 aria-expanded={resetId === u.id}>Reset password</button>
               {#if confirmDeleteId === u.id}
@@ -174,7 +177,7 @@
                 <button class="btn btn-sm preset-filled-error-500" type="button" disabled={busyId !== null || !deleteCounts} onclick={() => remove(u)}>Confirm delete</button>
                 <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId !== null} onclick={closeDelete}>Cancel</button>
               {:else}
-                <button class="btn btn-sm preset-tonal-error" type="button" disabled={busyId !== null} onclick={() => previewDelete(u)}>Delete</button>
+                <button class="btn btn-sm preset-tonal-error" type="button" disabled={busyId !== null} onclick={() => previewDelete(u)}>{u.deletingAt ? "Retry delete" : "Delete"}</button>
               {/if}
             </div>
             {#if resetId === u.id}

@@ -45,6 +45,12 @@ export function createJobRunServices(o: JobRunServicesOptions) {
       defaultTimezone: o.defaultTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
     },
     runs: { runs: manager, heartbeatMs: o.heartbeatMs },
+    userDeletion: {
+      jobs: { system: { disableSchedules: async (ownerId: string) => {
+        await o.jobs.system.disableSchedules(ownerId);
+        await scheduler.reload();
+      } } },
+    },
     dashboard: { instances: o.instances, jobs: o.jobs, runs: o.runs, now: o.now },
     settings: { runs: o.runs },
   };

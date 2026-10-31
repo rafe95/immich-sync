@@ -19,6 +19,9 @@ const parseRole = (v: unknown): Role => {
   return v;
 };
 
+// Queue before actor admission: reciprocal removals must not hold each other's deletion drains open.
+const removals = new WeakMap<UserStore, Promise<void>>();
+
 export function createUserRoutes({ users, sessions, deletion, eraser }: UserRouteDeps) {
   const idOf = (req: Request) => {
     const id = (req as Request & { params: { id: string } }).params.id;
@@ -37,18 +40,18 @@ export function createUserRoutes({ users, sessions, deletion, eraser }: UserRout
   return {
     list: async () => json({ users: await users.list() }),
 
-    create: async (req: Request) => {
+    create: async (req: Request, ctx: AuthContext) => {
       const body = await readJsonObject(req);
       const problem = usernameProblem(body.username) ?? passwordProblem(body.password);
       if (problem) throw new HttpError(400, problem);
       const role = body.role === undefined ? "user" : parseRole(body.role);
       const hash = await hashPassword(body.password as string);
-      const user = await guard(() => users.create(normalizeUsername(body.username as string), hash, role));
+      const user = await ctx.write(() => guard(() => users.create(normalizeUsername(body.username as string), hash, role)));
       return json({ user }, 201);
     },
 
     /** { role?, password? }. A password here is an administrator reset: it ends that user's sessions. */
-    update: async (req: Request) => {
+    update: async (req: Request, ctx: AuthContext) => {
       const id = idOf(req);
       const body = await readJsonObject(req);
       if (body.role === undefined && body.password === undefined) throw new HttpError(400, "Provide role and/or password.");
@@ -59,9 +62,12 @@ export function createUserRoutes({ users, sessions, deletion, eraser }: UserRout
         if (problem) throw new HttpError(400, problem);
         patch.hash = await hashPassword(body.password as string);
       }
-      const user = await guard(() => users.update(id, patch));
-      if (!user) throw new HttpError(404, "User not found.");
-      if (patch.hash) await sessions.deleteForUser(id);
+      const user = await ctx.write(async () => {
+        const updated = await guard(() => users.update(id, patch));
+        if (!updated) throw new HttpError(404, "User not found.");
+        if (patch.hash) await sessions.deleteForUser(id);
+        return updated;
+      });
       return json({ user });
     },
 
@@ -75,7 +81,13 @@ export function createUserRoutes({ users, sessions, deletion, eraser }: UserRout
     /** Cancels the user's runs, then erases their data; 409 (data kept, user locked out) when runs do not stop in time. */
     remove: async (req: Request, ctx: AuthContext) => {
       const id = idOf(req);
-      const result = await guard(() => deletion.remove(ctx.user.id, id));
+      const pending = (removals.get(users) ?? Promise.resolve()).then(() =>
+        ctx.write(() => guard(() => deletion.remove(ctx.user.id, id))));
+      const settled = pending.then(() => {}, () => {});
+      removals.set(users, settled);
+      const result = await pending.finally(() => {
+        if (removals.get(users) === settled) removals.delete(users);
+      });
       if (result === "not_found") throw new HttpError(404, "User not found.");
       if (result === "stopping") throw new HttpError(409, "Runs are still stopping. Try again.");
       return json({ deleted: true });

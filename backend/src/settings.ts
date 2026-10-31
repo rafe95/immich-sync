@@ -1,6 +1,7 @@
 /** /api/settings/retention and the periodic history pruning that applies it. */
 
 import { HttpError, json, readJsonObject } from "./http.ts";
+import type { AuthContext } from "./auth/auth.ts";
 import { pruneHistory, type RunStore } from "./runs/store.ts";
 import { systemTimers, type Timers } from "./scheduler.ts";
 
@@ -9,13 +10,13 @@ export type SettingsDeps = { runs: Pick<RunStore, "getRetentionDays" | "setReten
 export function createSettingsRoutes(deps: SettingsDeps) {
   return {
     getRetention: async () => json({ days: await deps.runs.getRetentionDays() }),
-    putRetention: async (req: Request) => {
+    putRetention: async (req: Request, ctx: AuthContext) => {
       const body = await readJsonObject(req);
       const days = body.days;
       if (typeof days !== "number" || !Number.isInteger(days) || days < 1 || days > 3650) {
         throw new HttpError(400, "days must be a whole number from 1 to 3650.");
       }
-      await deps.runs.setRetentionDays(days);
+      await ctx.write(() => deps.runs.setRetentionDays(days));
       return json({ days });
     },
   };

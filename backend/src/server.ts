@@ -61,7 +61,13 @@ export function createServer(deps: ServerDeps) {
       "/api/auth/me": { GET: auth.me },
       "/api/auth/password": { POST: auth.changePassword(clientKey) },
       "/api/users": { GET: admin(users.list), POST: admin(users.create) },
-      "/api/users/:id": { PATCH: admin(users.update), DELETE: admin(users.remove) },
+      "/api/users/:id": {
+        PATCH: admin(users.update),
+        DELETE: admin((req, ctx) => {
+          server.timeout(req, 0);
+          return users.remove(req, ctx);
+        }),
+      },
       "/api/users/:id/data": { GET: admin(users.data) },
       "/api/instances": { GET: p(instances.list), POST: p(instances.create) },
       "/api/instances/:id": { GET: p(instances.get), PATCH: p(instances.update), DELETE: p(instances.remove) },

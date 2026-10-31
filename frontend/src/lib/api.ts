@@ -34,7 +34,7 @@ export type InstanceInput = { alias?: string; apiUrl?: string; apiKey?: string; 
 
 export type UserRole = "admin" | "user";
 export type SessionUser = { id: string; username: string; role: UserRole };
-export type UserRecord = { id: string; username: string; role: UserRole; createdAt: string; lastLoginAt: string | null };
+export type UserRecord = { id: string; username: string; role: UserRole; createdAt: string; lastLoginAt: string | null; deletingAt: string | null };
 export type UserDataCounts = { instances: number; jobs: number; runs: number };
 export type AuthResponse = { authenticated?: boolean; csrfToken: string; user?: SessionUser };
 

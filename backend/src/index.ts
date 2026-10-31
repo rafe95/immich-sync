@@ -49,7 +49,7 @@ async function main() {
     runs: services.runs,
     dashboard: services.dashboard,
     settings: services.settings,
-    userDeletion: { jobs: jobStore, manager: services.manager, eraser: pgUserDataEraser(db.sql) },
+    userDeletion: { ...services.userDeletion, manager: services.manager, eraser: pgUserDataEraser(db.sql) },
     trustProxy: config.trustProxy,
   });
   await pruner.start();

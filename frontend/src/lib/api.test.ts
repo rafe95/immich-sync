@@ -92,6 +92,12 @@ test("user deletion preview gets counts and propagates errors", async () => {
   await expect(api.getUserData("missing")).rejects.toMatchObject({ status: 404, message: "User not found." });
 });
 
+test("users list preserves deletion lockout state for retry actions", async () => {
+  const user = { id: "u", username: "bob", role: "user", createdAt: "2026-10-31T00:00:00Z", lastLoginAt: null, deletingAt: "2026-10-31T01:00:00Z" };
+  const { f } = fake([{ status: 200, body: { users: [user] } }]);
+  expect(await createApiClient({ fetch: f }).listUsers()).toEqual([user]);
+});
+
 test("setup stores the csrf token and user admin calls use the contract paths", async () => {
   const { f, calls } = fake([
     { status: 201, body: { authenticated: true, csrfToken: "s", user: { id: "1", username: "root", role: "admin" } } },

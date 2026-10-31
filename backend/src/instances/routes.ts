@@ -4,8 +4,9 @@ import { checkInstance, validateInstanceInput, type InstanceCheck } from "@immic
 import { DecryptError, decryptSecret, encryptSecret } from "../crypto.ts";
 import { HttpError, json, readJsonObject } from "../http.ts";
 import { AliasTakenError, InstanceInUseError, isUuid, type InstancePatch, type InstanceStore } from "./store.ts";
+import type { OwnerWriteContext } from "../auth/owner-writes.ts";
 
-type Ctx = { user: { id: string } };
+type Ctx = { user: { id: string } } & OwnerWriteContext;
 
 export type InstanceRouteDeps = {
   store: InstanceStore;
@@ -70,9 +71,9 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
       const apiKey = str(body, "apiKey")?.trim() ?? "";
       validate(alias, apiUrl, apiKey);
       try {
-        const created = await store.create(ctx.user.id, {
+        const created = await ctx.write(() => store.create(ctx.user.id, {
           alias, apiUrl, apiKeyEnc: encryptSecret(apiKey, secretKey), note: note(body) ?? null, isDefault: bool(body, "isDefault") ?? false,
-        });
+        }));
         return json(created, 201);
       } catch (err) {
         if (err instanceof AliasTakenError) throw taken();
@@ -93,7 +94,7 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
       const patch: InstancePatch = { alias, apiUrl, note: note(body), isDefault: bool(body, "isDefault") };
       if (apiKey !== undefined) patch.apiKeyEnc = encryptSecret(apiKey, secretKey);
       try {
-        const updated = await store.update(ctx.user.id, id, patch);
+        const updated = await ctx.write(() => store.update(ctx.user.id, id, patch));
         if (!updated) throw new HttpError(404, "Instance not found.");
         return json(updated);
       } catch (err) {
@@ -105,7 +106,7 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
     remove: async (req: Request, ctx: Ctx) => {
       const id = idOf(req as never);
       try {
-        if (!(await store.delete(ctx.user.id, id))) throw new HttpError(404, "Instance not found.");
+        if (!(await ctx.write(() => store.delete(ctx.user.id, id)))) throw new HttpError(404, "Instance not found.");
       } catch (err) {
         if (err instanceof InstanceInUseError) {
           throw new HttpError(409, "This instance is used by one or more job steps. Change or delete those jobs first.");
@@ -130,7 +131,7 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
         throw err;
       }
       const result: InstanceCheck = await runCheck({ alias: record.alias, apiUrl: record.apiUrl, apiKey });
-      await store.saveCheck(ctx.user.id, id, result, new Date(result.checkedAt));
+      await ctx.write(() => store.saveCheck(ctx.user.id, id, result, new Date(result.checkedAt)));
       return json(result);
     },
   };

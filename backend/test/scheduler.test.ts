@@ -6,6 +6,7 @@ import { memoryInstanceStore } from "../src/instances/store.ts";
 import { createRunManager } from "../src/runs/manager.ts";
 import { memoryRunStore } from "../src/runs/store.ts";
 import { createScheduler, type Timers } from "../src/scheduler.ts";
+import { createJobRunServices } from "../src/services.ts";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -87,6 +88,33 @@ async function setup(start = "2026-03-01T08:00:00Z") {
 }
 
 describe("scheduler", () => {
+  test("deletion disables schedules and removes their armed timers", async () => {
+    const clock = fakeTimers("2026-03-01T08:00:00Z");
+    const jobs = memoryJobStore();
+    const svc = createJobRunServices({ jobs, instances: memoryInstanceStore(), runs: memoryRunStore(), executor: { run: async () => { throw new Error("must not execute"); } } as never, owners: { isDeleting: async () => false }, scheduler: { timers: clock.timers } });
+    const job = await jobs.create(OWNER, { name: "scheduled", steps: [step()] });
+    await jobs.upsertSchedule(OWNER, job.id, { cron: "0 9 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
+    await svc.scheduler.start();
+    expect(svc.scheduler.armedCount()).toBe(1);
+    await svc.userDeletion.jobs.system.disableSchedules(OWNER);
+    expect(svc.scheduler.armedCount()).toBe(0);
+    expect(clock.pending()).toBe(0);
+    svc.scheduler.stop();
+  });
+  test("an armed stale schedule cannot start or record skips after it was disabled", async () => {
+    for (const active of [false, true]) {
+      const t = await setup();
+      const job = await t.mk();
+      await t.scheduler.start();
+      if (active) t.active.set(job.id, "held-run");
+      await t.jobs.system.disableSchedules(OWNER);
+      await t.clock.advanceTo("2026-03-01T09:00:30Z");
+      expect(t.started).toEqual([]);
+      expect(t.skipped).toEqual([]);
+      t.scheduler.stop();
+    }
+  });
+
   test("scheduler does not start a run for an owner being deleted", async () => {
     const clock = fakeTimers("2026-03-01T08:00:00Z");
     const jobs = memoryJobStore();

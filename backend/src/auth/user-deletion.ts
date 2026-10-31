@@ -16,6 +16,7 @@ import { settlesWithin, type RunManager } from "../runs/manager.ts";
 import type { RunStore } from "../runs/store.ts";
 import type { SessionStore } from "./sessions.ts";
 import type { UserStore } from "./users.ts";
+import { ownerWritesFor } from "./owner-writes.ts";
 
 export type UserDataCounts = { instances: number; jobs: number; runs: number };
 
@@ -78,7 +79,7 @@ export type UserDeletionDeps = {
   jobs: { system: Pick<JobStore["system"], "disableSchedules"> };
   manager: Pick<RunManager, "cancelOwner" | "pendingStarts" | "waitFor">;
   eraser: UserDataEraser;
-  /** Overall bound on waiting for the user's runs to stop. */
+  /** Overall bound on waiting for admitted owner writes and runs to stop. */
   timeoutMs?: number;
   now?: () => Date;
 };
@@ -90,18 +91,29 @@ export const DELETE_TIMEOUT_MS = 60_000;
 export function createUserDeletion(deps: UserDeletionDeps) {
   const timeoutMs = deps.timeoutMs ?? DELETE_TIMEOUT_MS;
   const now = deps.now ?? (() => new Date());
+  const writes = ownerWritesFor(deps.users);
   return {
     /** Throws HttpError 409 for self-deletion and LastAdminError for the last administrator. */
     async remove(actorId: string, userId: string): Promise<UserDeletionResult> {
       if (actorId === userId) throw new HttpError(409, "You cannot delete your own account.");
       if (!(await deps.users.markDeleting(userId, now()))) return "not_found";
-      await deps.sessions.deleteForUser(userId);
-      await deps.jobs.system.disableSchedules(userId);
+      const deadline = Date.now() + timeoutMs;
+      writes.close(userId, async () => {
+        await deps.sessions.deleteForUser(userId);
+        await deps.jobs.system.disableSchedules(userId);
+      });
+      deps.manager.cancelOwner(userId);
+      const ended = deps.sessions.deleteForUser(userId);
+      // Disabling may itself wait on an admitted schedule write's row lock. It shares the same bound;
+      // admitted writes pause schedules again before releasing the barrier, even after a timeout.
+      const paused = deps.jobs.system.disableSchedules(userId);
+      if (!(await settlesWithin([...writes.pending(userId), ended, paused], deadline - Date.now()))) return "stopping";
+      await ended;
+      await paused; // a failed disable is not permission to erase
 
       // cancelOwner retains deletion intent even after this wait times out, so starts already in flight launch aborted.
       // Still wait for pendingStarts and scan again until neither active runs nor starts remain before erasing data,
       // all within one overall deadline.
-      const deadline = Date.now() + timeoutMs;
       for (;;) {
         const runIds = deps.manager.cancelOwner(userId);
         const starts = deps.manager.pendingStarts(userId);
