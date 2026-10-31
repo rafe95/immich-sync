@@ -2,17 +2,19 @@
   import { onMount } from "svelte";
   import { getHealth, type Health } from "./lib/api.ts";
   import { checkSession, logout, session } from "./lib/session.svelte.ts";
+  import Dashboard from "./Dashboard.svelte";
+  import Jobs from "./Jobs.svelte";
   import Instances from "./Instances.svelte";
   import Login from "./Login.svelte";
   import Run from "./Run.svelte";
   import History from "./History.svelte";
   import { formFromRun, type Run as RunRecord, type RunForm } from "./lib/runs.ts";
 
-  // The five screens from SPEC.md, "User interface". Dashboard is a placeholder; Jobs does not exist yet.
+  // The five screens from SPEC.md, "User interface". Dashboard is built by its own component.
   const screens = [
     { id: "dashboard", label: "Dashboard", enabled: true },
     { id: "run", label: "Run", enabled: true },
-    { id: "jobs", label: "Jobs", enabled: false },
+    { id: "jobs", label: "Jobs", enabled: true },
     { id: "history", label: "History", enabled: true },
     { id: "instances", label: "Instances", enabled: true },
   ] as const;
@@ -98,12 +100,10 @@
           <Run bind:activeRunId {prefill} />
         {:else if current === "history"}
           <History bind:openId={historyRunId} onrunreal={runRealFromHistory} />
+        {:else if current === "jobs"}
+          <Jobs onrun={(id) => { activeRunId = id; prefill = null; current = "run"; }} />
         {:else}
-          <h1 class="h3">Dashboard</h1>
-          <div class="card preset-outlined-surface-200-800 max-w-2xl p-4">
-            <p>Running jobs, schedules and instance health will appear here once jobs exist.</p>
-            <p class="mt-2 text-sm opacity-70">Not built yet. Instances can be managed from the navigation.</p>
-          </div>
+          <Dashboard onopenrun={(id) => { historyRunId = id; current = "history"; }} />
         {/if}
       </main>
     </div>

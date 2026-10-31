@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import RunView from "./RunView.svelte";
   import { api } from "./lib/session.svelte.ts";
-  import { RUN_STATUSES, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
+  import { RUN_STATUSES, statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
 
   let { onrunreal, openId = $bindable(null) }: { onrunreal: (run: Run) => void; openId: string | null } = $props();
 
@@ -16,8 +16,6 @@
 
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "-");
   const last = $derived(Math.min(offset + PAGE, total));
-  const statusCls = (s: RunStatus) =>
-    s === "completed" ? "preset-tonal-success" : s === "failed" || s === "interrupted" ? "preset-tonal-error" : s === "completed_with_failures" || s === "cancelled" ? "preset-tonal-warning" : "preset-tonal-primary";
 
   async function load() {
     loading = true;
@@ -84,7 +82,7 @@
                   <div>{r.jobName}{r.dryRun ? " (dry run)" : ""}</div>
                   <div class="text-xs opacity-70">{stepText(r)} · {r.trigger}</div>
                 </td>
-                <td><span class="badge {statusCls(r.status)}">{statusLabel(r.status)}</span></td>
+                <td><span class="badge {statusClass(r.status)}">{statusLabel(r.status)}</span></td>
                 <td>{fmt(r.finishedAt)}</td>
                 <td><button type="button" class="btn btn-sm preset-tonal-surface" onclick={() => (openId = r.id)} aria-label={`Open run ${r.jobName} started ${fmt(r.startedAt ?? r.createdAt)}`}>Open</button></td>
               </tr>

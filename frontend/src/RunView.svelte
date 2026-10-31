@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import Console from "./Console.svelte";
   import { api } from "./lib/session.svelte.ts";
-  import { formFromRun, isTerminal, logAsJson, logAsText, operationLabel, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
+  import { formFromRun, isTerminal, logAsJson, logAsText, operationLabel, statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
 
   /** A run's header, console, cancel, log download and "Run for real". Shared by the Run and History screens. */
   let { runId, onrunreal }: { runId: string; onrunreal?: (run: Run) => void } = $props();
@@ -18,8 +18,6 @@
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "-");
   const finished = $derived(run ? isTerminal(run.status) : false);
-  const statusCls = (s: RunStatus) =>
-    s === "completed" ? "preset-tonal-success" : s === "failed" || s === "interrupted" ? "preset-tonal-error" : s === "completed_with_failures" || s === "cancelled" ? "preset-tonal-warning" : "preset-tonal-primary";
   const canRunReal = $derived(!!run && finished && run.dryRun && run.status !== "failed" && formFromRun(run) !== null);
 
   async function load() {
@@ -99,7 +97,7 @@
     <div class="card preset-outlined-surface-200-800 space-y-2 p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class="h5">{run.jobName}</h2>
-        <span class="badge {statusCls(run.status)}" role="status" aria-live="polite">{statusLabel(run.status)}{run.dryRun ? " · dry run" : ""}</span>
+        <span class="badge {statusClass(run.status)}" role="status" aria-live="polite">{statusLabel(run.status)}{run.dryRun ? " · dry run" : ""}</span>
       </div>
       {#each run.settings.steps as s (s.position)}
         <p class="text-sm">

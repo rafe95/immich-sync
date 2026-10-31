@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  buildRunBody, defaultForm, eventsUrl, formFromRun, initialConsole, logAsText, MAX_LINES, progressPercent, reconnectDelay, reduceEvent, reduceEvents, validateForm,
+  buildRunBody, defaultForm, eventsUrl, formFromRun, initialConsole, logAsText, MAX_LINES, MAX_FAILURES, formatBytes, lineVisible, stepSummaries, progressPercent, reconnectDelay, reduceEvent, reduceEvents, validateForm,
+  statusClass, RUN_STATUSES, isTerminal,
   type Run, type RunEvent,
 } from "./runs.ts";
 
@@ -88,4 +89,55 @@ test("reconnect delay backs off and caps", () => {
 
 test("text export", () => {
   expect(logAsText([ev(1, { level: "warning" })])).toBe("2026-01-01T00:00:00Z WARNING m1\n");
+});
+
+describe("end-of-run summary", () => {
+  const ev = (id: number, type: string, level: "info" | "error" | "warning", data: unknown, message: string | null = null): RunEvent => ({ id, runId: "r", ts: "2026-01-01T00:00:00Z", level, type, message, data });
+  const failed = (id: number, step: number, name: string, message: string) => ev(id, "asset", "error", { step, asset: { fileName: name, outcome: "failed", message } });
+
+  test("collects failed assets per step, capped", () => {
+    let s = reduceEvents(initialConsole(), [failed(1, 1, "a.jpg", "boom"), ev(2, "asset", "info", { step: 1, asset: { fileName: "b.jpg", outcome: "copied" } })]);
+    expect(s.failures).toEqual([{ eventId: 1, step: 1, name: "a.jpg", message: "boom" }]);
+    for (let i = 0; i < MAX_FAILURES + 2; i++) s = reduceEvent(s, failed(10 + i, 1, "x", "m"));
+    expect(s.failures.length).toBe(MAX_FAILURES);
+    expect(s.failuresDropped).toBe(3);
+  });
+
+  test("builds a block per step with failures", () => {
+    const sum = ev(5, "summary", "warning", { step: 1, status: "completed_with_failures", summary: { assetsFound: 10, copied: 5, moved: 0, synced: 0, unchanged: 0, skipped: 2, inTargetTrash: 1, failed: 2, cancelled: 0, wouldCopy: 0, wouldMove: 0, wouldSync: 0, bytesCopied: 2048, bytesToTransfer: 0, dryRun: false } }, "Step 1 completed with failures");
+    const s = reduceEvents(initialConsole(), [failed(1, 1, "a.jpg", "boom"), failed(2, 2, "other", "x"), sum]);
+    const [v] = stepSummaries(s.summaries, s.failures);
+    expect(v?.totals).toMatchObject({ found: 10, done: 5, doneLabel: "copied", skipped: 2, inTargetTrash: 1, failed: 2, bytes: 2048, dryRun: false });
+    expect(v?.failures.map((f) => f.name)).toEqual(["a.jpg"]);
+  });
+
+  test("dry run uses would* counts; error step has no totals; ignores non-step summaries", () => {
+    const dry = ev(1, "summary", "info", { step: 1, status: "completed", summary: { assetsFound: 4, wouldMove: 3, bytesToTransfer: 100, dryRun: true } });
+    const err = ev(2, "summary", "error", { step: 2, status: "error", summary: { message: "no" } }, "Step 2 error: no");
+    const job = ev(3, "summary", "info", { status: "completed" });
+    const out = stepSummaries([dry, err, job]);
+    expect(out.length).toBe(2);
+    expect(out[0]?.totals).toMatchObject({ done: 3, doneLabel: "moved", bytes: 100, dryRun: true });
+    expect(out[1]?.totals).toBeNull();
+    expect(out[1]?.message).toContain("no");
+  });
+
+  test("formatBytes and failures-only line filter", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(1536)).toBe("1.50 KB");
+    const f = { minRank: 1, rank: 1, showAssets: true, failuresOnly: true };
+    expect(lineVisible(failed(1, 1, "a", "m"), f)).toBe(true);
+    expect(lineVisible(ev(2, "asset", "warning", { step: 1, asset: { outcome: "in-target-trash" } }), f)).toBe(false);
+    expect(lineVisible(ev(3, "asset", "info", { step: 1, asset: { outcome: "skipped" } }), f)).toBe(false);
+    expect(lineVisible(ev(4, "log", "warning", {}, "w"), f)).toBe(true);
+    expect(lineVisible(ev(5, "log", "info", {}, "i"), { ...f, failuresOnly: false })).toBe(true);
+  });
+});
+
+test("a skipped schedule firing is terminal, filterable and has a neutral badge", () => {
+  expect(isTerminal("skipped")).toBe(true);
+  expect(RUN_STATUSES).toContain("skipped");
+  expect(statusClass("skipped")).toBe("preset-tonal-surface");
+  expect(statusClass("failed")).toBe("preset-tonal-error");
+  expect(statusClass("completed")).toBe("preset-tonal-success");
 });

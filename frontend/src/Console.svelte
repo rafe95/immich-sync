@@ -2,7 +2,7 @@
   import { tick } from "svelte";
   import { api } from "./lib/session.svelte.ts";
   import {
-    assetOf, eventText, eventsUrl, initialConsole, progressPercent, reconnectDelay, reduceEvents, statusLabel,
+    assetOf, eventText, formatBytes, lineVisible, stepSummaries, eventsUrl, initialConsole, progressPercent, reconnectDelay, reduceEvents, statusLabel,
     type ConsoleState, type EventLevel, type RunEvent, type RunStatus,
   } from "./lib/runs.ts";
 
@@ -17,12 +17,15 @@
   let loadError = $state<string | null>(null);
   let minLevel = $state<EventLevel>("info");
   let showAssets = $state(true);
+  let failuresOnly = $state(false);
   let following = $state(true);
   let logEl = $state<HTMLDivElement | null>(null);
 
   const rank: Record<EventLevel, number> = { debug: 0, info: 1, warning: 2, error: 3 };
   const levelCls: Record<EventLevel, string> = { debug: "opacity-60", info: "", warning: "text-warning-600-400", error: "text-error-600-400" };
-  const visible = $derived(cs.events.filter((e) => rank[e.level] >= rank[minLevel] && (showAssets || e.type !== "asset")));
+  const visible = $derived(cs.events.filter((e) => lineVisible(e, { minRank: rank[minLevel], rank: rank[e.level], showAssets, failuresOnly })));
+  const blocks = $derived(stepSummaries(cs.summaries, cs.failures));
+  const finishedRun = $derived(cs.endStatus !== null || (mode === "replay" && connection === "closed"));
   const percent = $derived(progressPercent(cs.progress));
   const outcomeCounts = $derived(Object.entries(cs.counts));
   const time = (iso: string) => new Date(iso).toLocaleTimeString();
@@ -167,7 +170,10 @@
         <option value="error">errors only</option>
       </select>
     </label>
-    <label class="flex items-center gap-2 text-sm"><input class="checkbox" type="checkbox" bind:checked={showAssets} /> Per-asset lines</label>
+    <label class="flex items-center gap-2 text-sm"><input class="checkbox" type="checkbox" bind:checked={showAssets} disabled={failuresOnly} /> Per-asset lines</label>
+    <button type="button" class="chip {failuresOnly ? 'preset-filled-error-500' : 'preset-tonal-surface'}" aria-pressed={failuresOnly} onclick={() => (failuresOnly = !failuresOnly)}>
+      Only failures{cs.failures.length ? ` (${cs.failures.length}${cs.failuresDropped ? "+" : ""})` : ""}
+    </button>
   </div>
 
   {#if cs.progress}
@@ -186,6 +192,42 @@
         <li class="badge {outcome === 'failed' ? 'preset-tonal-error' : 'preset-tonal-surface'}">{outcome}: {n}</li>
       {/each}
     </ul>
+  {/if}
+
+  {#if finishedRun && blocks.length}
+    <div class="space-y-3" aria-label="Run summary">
+      {#each blocks as b (b.step)}
+        <section class="card preset-outlined-surface-200-800 space-y-2 p-4" aria-labelledby="sum-{b.step}">
+          <h3 id="sum-{b.step}" class="h6">Step {b.step}: {statusLabel(b.status)}{b.totals?.dryRun ? " (dry run: counts are what would happen)" : ""}</h3>
+          {#if b.totals}
+            {@const t = b.totals}
+            <dl class="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
+              <div><dt class="opacity-70">Found</dt><dd>{t.found}</dd></div>
+              <div><dt class="opacity-70">{t.dryRun ? `Would be ${t.doneLabel === "done" ? "changed" : t.doneLabel}` : t.doneLabel === "done" ? "Changed" : t.doneLabel}</dt><dd>{t.done}</dd></div>
+              <div><dt class="opacity-70">Skipped (already present)</dt><dd>{t.skipped}</dd></div>
+              <div><dt class="opacity-70">In target trash</dt><dd>{t.inTargetTrash}</dd></div>
+              <div><dt class="opacity-70">Failed</dt><dd class={t.failed ? "font-semibold text-error-600-400" : ""}>{t.failed}</dd></div>
+              <div><dt class="opacity-70">{t.dryRun ? "To transfer" : "Transferred"}</dt><dd>{formatBytes(t.bytes)}</dd></div>
+              {#if t.cancelled}<div><dt class="opacity-70">Cancelled</dt><dd>{t.cancelled}</dd></div>{/if}
+            </dl>
+            {#if t.inTargetTrash}
+              <p class="text-xs opacity-70">Assets in the target's trash are skipped on purpose and never uploaded again. Restore or empty them on the target yourself if you want them handled.</p>
+            {/if}
+          {:else if b.message}
+            <p class="text-sm">{b.message}</p>
+          {/if}
+          {#if b.failures.length}
+            <details>
+              <summary class="cursor-pointer text-sm">Failed assets ({b.failures.length})</summary>
+              <ul class="mt-2 max-h-64 space-y-1 overflow-auto text-xs">
+                {#each b.failures as f (f.eventId)}<li><span class="font-mono">{f.name}</span>{f.message ? `: ${f.message}` : ""}</li>{/each}
+              </ul>
+            </details>
+          {/if}
+        </section>
+      {/each}
+      {#if cs.failuresDropped > 0}<p class="text-xs opacity-70">{cs.failuresDropped} more failures are in the downloaded log.</p>{/if}
+    </div>
   {/if}
 
   {#if loadError}<p class="text-error-500" role="alert">{loadError}</p>{/if}

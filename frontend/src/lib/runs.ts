@@ -2,13 +2,21 @@
 
 export type Operation = "copy" | "move" | "sync_metadata";
 export type Kind = "all" | "photos" | "videos";
-export type RunStatus = "queued" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "interrupted";
+export type RunStatus = "queued" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "interrupted" | "skipped";
 export type EventLevel = "debug" | "info" | "warning" | "error";
 
-export const RUN_STATUSES: RunStatus[] = ["queued", "running", "completed", "completed_with_failures", "failed", "cancelled", "interrupted"];
-const TERMINAL = new Set<RunStatus>(["completed", "completed_with_failures", "failed", "cancelled", "interrupted"]);
+export const RUN_STATUSES: RunStatus[] = ["queued", "running", "completed", "completed_with_failures", "failed", "cancelled", "interrupted", "skipped"];
+const TERMINAL = new Set<RunStatus>(["completed", "completed_with_failures", "failed", "cancelled", "interrupted", "skipped"]);
 export const isTerminal = (s: RunStatus) => TERMINAL.has(s);
 export const statusLabel = (s: string) => s.replaceAll("_", " ");
+
+/** Skeleton badge preset for a run status; `skipped` (a schedule firing that did not start) is neutral. */
+export const statusClass = (s: RunStatus): string =>
+  s === "completed" ? "preset-tonal-success"
+    : s === "failed" || s === "interrupted" ? "preset-tonal-error"
+      : s === "completed_with_failures" || s === "cancelled" ? "preset-tonal-warning"
+        : s === "skipped" ? "preset-tonal-surface"
+          : "preset-tonal-primary";
 
 export type RunEvent = { id: number; runId: string; ts: string; level: EventLevel; type: string; message: string | null; data: unknown };
 
@@ -155,11 +163,17 @@ export type ConsoleState = {
   progress: Progress | null;
   counts: Record<string, number>;
   summaries: RunEvent[];
+  /** Failed assets seen so far (capped at MAX_FAILURES; `failuresDropped` counts the rest). */
+  failures: FailedAsset[];
+  failuresDropped: number;
   endStatus: RunStatus | null;
 };
 
+export type FailedAsset = { eventId: number; step: number | null; name: string; message: string | null };
+export const MAX_FAILURES = 1000;
+
 export const MAX_LINES = 3000;
-export const initialConsole = (): ConsoleState => ({ events: [], dropped: 0, lastId: 0, progress: null, counts: {}, summaries: [], endStatus: null });
+export const initialConsole = (): ConsoleState => ({ events: [], dropped: 0, lastId: 0, progress: null, counts: {}, summaries: [], failures: [], failuresDropped: 0, endStatus: null });
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -193,6 +207,12 @@ export function reduceEvent(s: ConsoleState, ev: RunEvent): ConsoleState {
   if (p) next.progress = p;
   const a = assetOf(ev);
   if (a?.outcome) next.counts = { ...s.counts, [a.outcome]: (s.counts[a.outcome] ?? 0) + 1 };
+  if (a?.outcome === "failed") {
+    if (s.failures.length < MAX_FAILURES) {
+      const step = isObj(ev.data) && typeof ev.data.step === "number" ? ev.data.step : null;
+      next.failures = [...s.failures, { eventId: ev.id, step, name: a.fileName ?? a.id ?? "asset", message: a.message ?? null }];
+    } else next.failuresDropped = s.failuresDropped + 1;
+  }
   if (ev.type === "summary") next.summaries = [...s.summaries, ev];
   return next;
 }
@@ -214,3 +234,92 @@ export function eventText(ev: RunEvent): string {
 
 export const logAsText = (events: RunEvent[]) => events.map((e) => `${e.ts} ${e.level.toUpperCase().padEnd(7)} ${eventText(e)}`).join("\n") + (events.length ? "\n" : "");
 export const logAsJson = (events: RunEvent[]) => JSON.stringify(events, null, 2) + "\n";
+
+// ---- end-of-run summary ----
+
+export type StepTotals = {
+  found: number;
+  /** Copied, moved or synced, depending on the operation. */
+  done: number;
+  doneLabel: "copied" | "moved" | "synced" | "done";
+  /** Already present on the target (or metadata unchanged). */
+  skipped: number;
+  /** Skipped by the safety rule: the asset is in the target's trash and is never re-uploaded. */
+  inTargetTrash: number;
+  failed: number;
+  cancelled: number;
+  bytes: number;
+  /** True when the step was a dry run: `done` then counts what would happen. */
+  dryRun: boolean;
+};
+export type StepSummaryView = {
+  step: number;
+  status: string;
+  message: string | null;
+  /** Null when the step reported no counts (e.g. it could not start). */
+  totals: StepTotals | null;
+  failures: FailedAsset[];
+};
+
+/** Stored summary events of the form { step, status, summary } (see backend runner) into one block per step. Pure. */
+export function stepSummaries(summaries: RunEvent[], failures: FailedAsset[] = []): StepSummaryView[] {
+  const out: StepSummaryView[] = [];
+  for (const ev of summaries) {
+    if (!isObj(ev.data) || typeof ev.data.step !== "number") continue;
+    const step = ev.data.step;
+    const sum = isObj(ev.data.summary) ? ev.data.summary : null;
+    const n = (k: string) => num(sum?.[k]) ?? 0;
+    let totals: StepTotals | null = null;
+    if (sum && num(sum.assetsFound) !== null) {
+      const dryRun = sum.dryRun === true;
+      const moved = dryRun ? n("wouldMove") : n("moved");
+      const copied = dryRun ? n("wouldCopy") : n("copied");
+      const synced = dryRun ? n("wouldSync") : n("synced");
+      const pick = moved > 0 ? ([moved, "moved"] as const) : copied > 0 ? ([copied, "copied"] as const) : synced > 0 ? ([synced, "synced"] as const) : ([0, "done"] as const);
+      totals = {
+        found: n("assetsFound"),
+        done: pick[0],
+        doneLabel: pick[1],
+        skipped: n("skipped") + n("unchanged"),
+        inTargetTrash: n("inTargetTrash"),
+        failed: n("failed"),
+        cancelled: n("cancelled"),
+        bytes: dryRun ? n("bytesToTransfer") : n("bytesCopied"),
+        dryRun,
+      };
+    }
+    const existing = out.findIndex((x) => x.step === step);
+    const view: StepSummaryView = {
+      step,
+      status: typeof ev.data.status === "string" ? ev.data.status : "unknown",
+      message: ev.message,
+      totals,
+      failures: failures.filter((f) => f.step === step),
+    };
+    if (existing >= 0) out[existing] = view;
+    else out.push(view);
+  }
+  return out.sort((a, b) => a.step - b.step);
+}
+
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${i === 0 ? v : v.toFixed(v < 10 ? 2 : 1)} ${units[i]}`;
+}
+
+/** Console line filter: with `failuresOnly`, only warnings/errors and failed-asset lines remain (summaries are always kept). */
+export function lineVisible(ev: RunEvent, f: { minRank: number; rank: number; showAssets: boolean; failuresOnly: boolean }): boolean {
+  if (f.failuresOnly) {
+    if (ev.type === "summary") return true;
+    const a = assetOf(ev);
+    return a ? a.outcome === "failed" : ev.level === "error" || ev.level === "warning";
+  }
+  return f.rank >= f.minRank && (f.showAssets || ev.type !== "asset");
+}

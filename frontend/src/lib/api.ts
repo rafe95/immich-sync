@@ -1,5 +1,6 @@
 /** Typed calls to the backend API. The browser only ever talks to this API, never to Immich. */
 
+import type { JobRecord, ScheduleInput, ScheduleRecord } from "./jobs.ts";
 import type { Run, RunEvent, RunStatus } from "./runs.ts";
 
 export type Health = { status: "ok" | "degraded"; database: boolean; version: string };
@@ -106,12 +107,22 @@ export function createApiClient(options: ApiClientOptions = {}) {
     updateInstance: (id: string, input: InstanceInput) => request<Instance>("PATCH", `/api/instances/${id}`, input),
     deleteInstance: (id: string) => request<{ deleted: true }>("DELETE", `/api/instances/${id}`),
     checkInstance: (id: string) => request<InstanceCheck>("POST", `/api/instances/${id}/check`),
+    listJobs: async () => (await request<{ jobs: JobRecord[] }>("GET", "/api/jobs")).jobs,
+    createJob: (body: Record<string, unknown>) => request<JobRecord>("POST", "/api/jobs", body),
+    updateJob: (id: string, body: Record<string, unknown>) => request<JobRecord>("PATCH", `/api/jobs/${id}`, body),
+    deleteJob: (id: string) => request<{ deleted: true }>("DELETE", `/api/jobs/${id}`),
+    runJob: (id: string, dryRun: boolean) => request<Run>("POST", `/api/jobs/${id}/run`, { dryRun }),
+    getSchedule: (jobId: string) => request<ScheduleRecord>("GET", `/api/jobs/${jobId}/schedule`),
+    putSchedule: (jobId: string, body: ScheduleInput) => request<ScheduleRecord>("PUT", `/api/jobs/${jobId}/schedule`, body),
+    deleteSchedule: (jobId: string) => request<{ deleted: true }>("DELETE", `/api/jobs/${jobId}/schedule`),
+    listSchedules: async () => (await request<{ schedules: ScheduleRecord[] }>("GET", "/api/schedules")).schedules,
     startRun: (body: Record<string, unknown>) => request<Run>("POST", "/api/runs", body),
     getRun: (id: string) => request<Run>("GET", `/api/runs/${id}`),
     cancelRun: (id: string) => request<{ cancelling: true }>("POST", `/api/runs/${id}/cancel`),
-    listRuns: (q: { limit: number; offset: number; status?: RunStatus | "" }) => {
+    listRuns: (q: { limit: number; offset: number; status?: RunStatus | ""; jobId?: string }) => {
       const p = new URLSearchParams({ limit: String(q.limit), offset: String(q.offset) });
       if (q.status) p.set("status", q.status);
+      if (q.jobId) p.set("jobId", q.jobId);
       return request<{ runs: Run[]; total: number; limit: number; offset: number }>("GET", `/api/runs?${p}`);
     },
     getRunLog: (id: string, after: number, limit = 1000) =>
