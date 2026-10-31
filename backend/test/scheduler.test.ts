@@ -54,6 +54,7 @@ async function setup(start = "2026-03-01T08:00:00Z") {
   const jobs: JobStore = memoryJobStore();
   const started: Array<{ jobId: string; trigger: string; startedBy: string; dryRun: boolean }> = [];
   const logs: string[] = [];
+  const skipped: Array<{ jobId: string; reason: string }> = [];
   const active = new Map<string, string>();
   let lastScheduled: Date | null = null;
   const scheduler = createScheduler({
@@ -64,6 +65,10 @@ async function setup(start = "2026-03-01T08:00:00Z") {
         return { id: `run-${started.length}` } as never;
       },
       activeRunForJob: (id: string) => active.get(id) ?? null,
+      recordSkipped: async (jobId: string, reason: string) => {
+        skipped.push({ jobId, reason });
+        return {} as never;
+      },
     },
     lastScheduledRunAt: async () => lastScheduled,
     timers: clock.timers,
@@ -74,7 +79,7 @@ async function setup(start = "2026-03-01T08:00:00Z") {
     await jobs.upsertSchedule(job.id, { cron: "0 9 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null, ...sched });
     return job;
   };
-  return { clock, jobs, scheduler, started, logs, active, mk, setLast: (d: Date | null) => (lastScheduled = d) };
+  return { clock, jobs, scheduler, started, skipped, logs, active, mk, setLast: (d: Date | null) => (lastScheduled = d) };
 }
 
 describe("scheduler", () => {
@@ -109,6 +114,7 @@ describe("scheduler", () => {
     await t.clock.advanceTo("2026-03-01T09:00:30Z");
     expect(t.started).toHaveLength(0);
     expect(t.logs.join("\n")).toContain("still queued or running");
+    expect(t.skipped).toEqual([{ jobId: job.id, reason: "skipped: previous run still active" }]);
     t.active.clear();
     await t.clock.advanceTo("2026-03-02T09:00:30Z");
     expect(t.started).toHaveLength(1);
@@ -122,6 +128,8 @@ describe("scheduler", () => {
     await t.clock.advanceTo("2026-03-01T09:00:30Z");
     expect(t.started).toHaveLength(0);
     expect(t.logs.join("\n")).toContain("no move confirmation");
+    expect(t.skipped).toHaveLength(1);
+    expect(t.skipped[0]!.reason).toContain("move confirmation");
     await t.jobs.upsertSchedule(job.id, { cron: "0 9 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: new Date("2026-03-01T10:00:00Z") });
     await t.scheduler.reload();
     await t.clock.advanceTo("2026-03-02T09:00:30Z");

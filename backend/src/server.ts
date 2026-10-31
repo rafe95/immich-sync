@@ -3,7 +3,9 @@
 import { join, normalize } from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import { createAuth, type AuthOptions } from "./auth/auth.ts";
+import { createDashboardRoutes, type DashboardDeps } from "./dashboard.ts";
 import { json } from "./http.ts";
+import { createSettingsRoutes, type SettingsDeps } from "./settings.ts";
 import { createJobRoutes, type JobRouteDeps } from "./jobs/routes.ts";
 import { createRunRoutes, type RunRouteDeps } from "./runs/routes.ts";
 import { createInstanceRoutes, type InstanceRouteDeps } from "./instances/routes.ts";
@@ -18,6 +20,8 @@ export type ServerDeps = {
   instances: InstanceRouteDeps;
   jobs: JobRouteDeps;
   runs: RunRouteDeps;
+  dashboard: DashboardDeps;
+  settings: SettingsDeps;
 };
 
 export function createServer(deps: ServerDeps) {
@@ -25,6 +29,8 @@ export function createServer(deps: ServerDeps) {
   const instances = createInstanceRoutes(deps.instances);
   const jobs = createJobRoutes(deps.jobs);
   const runs = createRunRoutes(deps.runs);
+  const dashboard = createDashboardRoutes(deps.dashboard);
+  const settings = createSettingsRoutes(deps.settings);
   const clientKey = (req: Request): string => server.requestIP(req)?.address ?? "unknown";
   // Every /api route except health and login goes through auth.protect (session + CSRF).
   const p = auth.protect;
@@ -55,6 +61,8 @@ export function createServer(deps: ServerDeps) {
       "/api/runs/:id/cancel": { POST: p(runs.cancel) },
       "/api/runs/:id/log": { GET: p(runs.log) },
       "/api/runs/:id/events": { GET: p((req) => runs.events(req, server)) },
+      "/api/dashboard": { GET: p(dashboard.get) },
+      "/api/settings/retention": { GET: p(settings.getRetention), PUT: p(settings.putRetention) },
       "/api/*": p(() => json({ message: "Not found" }, 404)),
     },
     fetch: (req) => serveStatic(deps.staticDir, new URL(req.url).pathname),

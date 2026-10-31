@@ -21,7 +21,7 @@ afterAll(async () => {
 describe.skipIf(!url)("sessions and instances (PostgreSQL)", () => {
   test("migrations create the sessions table", async () => {
     await sql!.unsafe(`create schema ${schema}`);
-    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql"]);
+    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql", "0003_skipped_runs.sql"]);
   });
 
   test("session store: create, get, expire, delete", async () => {

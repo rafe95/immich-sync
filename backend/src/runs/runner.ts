@@ -4,6 +4,7 @@
  */
 
 import type { RunEventHub } from "./hub.ts";
+import type { ProgressThrottle } from "./throttle.ts";
 import type { ExecutionContext, InstanceProblem, StepExecutor, StepOutcome } from "./executor.ts";
 import { InstanceLockManager, LockAbortedError, lockSetForSteps, type LockHandle } from "./locks.ts";
 import type { NewEvent, RunEvent, RunSettingsStep, RunStatus, RunStepStatus, RunStore } from "./store.ts";
@@ -14,15 +15,26 @@ export type RunnerDeps = {
   executor: StepExecutor;
   locks: InstanceLockManager;
   now?: () => Date;
+  /** Limits persisted/streamed progress events (about one per second per step). Absent: no throttling. */
+  throttle?: ProgressThrottle;
 };
 
 export const describeStep = (s: RunSettingsStep) => `${s.operation.replace("_", " ")} ${s.source.alias} -> ${s.target.alias}`;
 
 /** Appends an event to the store, then pushes it to live subscribers. */
-export async function emitEvent(deps: Pick<RunnerDeps, "store" | "hub">, runId: string, ev: NewEvent): Promise<RunEvent> {
+export async function emitEvent(deps: Pick<RunnerDeps, "store" | "hub" | "throttle">, runId: string, ev: NewEvent): Promise<RunEvent | null> {
+  if (deps.throttle && !deps.throttle.admit(runId, ev)) return null; // held; written by flushProgress at the latest
   const saved = await deps.store.appendEvent(runId, ev);
   deps.hub.publishEvent(saved);
   return saved;
+}
+
+/** Writes the progress events held back for a run (or one step), so each step's last progress is always persisted. */
+export async function flushProgress(deps: Pick<RunnerDeps, "store" | "hub" | "throttle">, runId: string, step?: number): Promise<void> {
+  for (const ev of deps.throttle?.flush(runId, step) ?? []) {
+    const saved = await deps.store.appendEvent(runId, ev);
+    deps.hub.publishEvent(saved);
+  }
 }
 
 /** Steps that make changes need the instance locks; dry-run steps only read. */
@@ -47,6 +59,8 @@ export async function executeRun(deps: RunnerDeps, runId: string, signal: AbortS
     }
   };
   const finish = async (status: RunStatus, extra: Record<string, unknown> = {}) => {
+    await flushProgress(deps, runId);
+    deps.throttle?.forget(runId);
     await store.finishRun(runId, status, { steps: stepResults, ...extra }, now());
     await log(status === "failed" || status === "interrupted" ? "error" : "info", `Run ${status.replaceAll("_", " ")}.`, { status });
     hub.publishEnd(runId, status);
@@ -123,6 +137,7 @@ export async function executeRun(deps: RunnerDeps, runId: string, signal: AbortS
       } catch (err) {
         outcome = { status: "error", message: (err as Error).message || "Step failed." };
       }
+      await flushProgress(deps, runId, step.position);
       const status: RunStepStatus = outcome.status;
       await store.updateStep(runId, step.position, { status, summary: outcome.summary ?? (outcome.message ? { message: outcome.message } : undefined), finishedAt: now() });
       stepResults.push({ position: step.position, status, summary: outcome.summary });
@@ -160,6 +175,7 @@ export async function executeRun(deps: RunnerDeps, runId: string, signal: AbortS
     // An orchestration bug or storage failure: never leave the run looking active.
     const message = (err as Error).message || "Unexpected error.";
     try {
+      await flushProgress(deps, runId);
       for (const s of (await store.getRun(runId))?.steps ?? []) {
         if (s.status === "running") await store.updateStep(runId, s.position, { status: "error", finishedAt: now() });
         else if (s.status === "pending") await store.updateStep(runId, s.position, { status: "not_run" });

@@ -11,6 +11,7 @@ import type { StepExecutor } from "./executor.ts";
 import { RunEventHub } from "./hub.ts";
 import { InstanceLockManager } from "./locks.ts";
 import { emitEvent, executeRun } from "./runner.ts";
+import { ProgressThrottle } from "./throttle.ts";
 import type { RunRecord, RunSettings, RunStatus, RunStore, RunTrigger } from "./store.ts";
 
 export type StartRequest = {
@@ -28,6 +29,8 @@ export type RunManagerDeps = {
   executor: StepExecutor;
   hub?: RunEventHub;
   locks?: InstanceLockManager;
+  /** Injectable clock (ms) for progress throttling in tests. */
+  nowMs?: () => number;
 };
 
 export type RunManager = ReturnType<typeof createRunManager>;
@@ -36,7 +39,7 @@ export function createRunManager(deps: RunManagerDeps) {
   const hub = deps.hub ?? new RunEventHub();
   const locks = deps.locks ?? new InstanceLockManager();
   const active = new Map<string, { controller: AbortController; done: Promise<RunStatus>; jobId: string | null }>();
-  const runnerDeps = { store: deps.store, hub, executor: deps.executor, locks };
+  const runnerDeps = { store: deps.store, hub, executor: deps.executor, locks, throttle: new ProgressThrottle(deps.nowMs) };
 
   async function snapshot(req: StartRequest): Promise<{ jobId: string | null; name: string; settings: RunSettings }> {
     let jobId: string | null = null;
@@ -89,6 +92,22 @@ export function createRunManager(deps: RunManagerDeps) {
       const run = await deps.store.createRun({ jobId, jobName: name, trigger: req.trigger, startedBy: req.startedBy, dryRun: settings.dryRun, settings });
       launch(run);
       return run;
+    },
+
+    /**
+     * Records a schedule firing that did not run (previous run still active, move unconfirmed) as a 'skipped' run
+     * in history. It is never launched, so it takes no lock and never counts as active.
+     */
+    async recordSkipped(jobId: string, reason: string): Promise<RunRecord> {
+      let snap: Awaited<ReturnType<typeof snapshot>>;
+      try {
+        snap = await snapshot({ job: { id: jobId }, trigger: "schedule", startedBy: "schedule", dryRun: false });
+      } catch {
+        const job = await deps.jobs.get(jobId); // instances may be gone; still record the skip
+        if (!job) throw new HttpError(404, "Job not found.");
+        snap = { jobId, name: job.name, settings: { jobId, name: job.name, dryRun: false, steps: [] } };
+      }
+      return deps.store.createSkippedRun({ jobId: snap.jobId, jobName: snap.name, settings: snap.settings, reason }, new Date());
     },
 
     /** Requests cancellation of an active run; false when it is not active in this process. */

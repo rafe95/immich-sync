@@ -124,3 +124,27 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     expect((await runs.getRun(stuck.id))!.jobId).toBeNull();
   });
 });
+
+describe.skipIf(!url)("skipped runs and stats (PostgreSQL)", () => {
+  test("skipped run is stored, filterable, counted out of stats, untouched by recovery, and prunable", async () => {
+    const runs = pgRunStore(sql!);
+    const settings = { jobId: null, name: "Nightly", dryRun: false, steps: [] };
+    const sk = await runs.createSkippedRun({ jobId: null, jobName: "Nightly", settings, reason: "skipped: previous run still active" }, new Date());
+    expect(sk).toMatchObject({ status: "skipped", trigger: "schedule", startedBy: "schedule" });
+    expect(sk.finishedAt).not.toBeNull();
+    expect((await runs.listEvents(sk.id, 0, 10)).map((e) => [e.level, e.message])).toEqual([["warning", "skipped: previous run still active"]]);
+    expect((await runs.listRuns({ limit: 5, offset: 0, status: "skipped" })).runs.map((r) => r.id)).toContain(sk.id);
+    const done = await runs.createRun({ jobId: null, jobName: "x", trigger: "manual", startedBy: "admin", dryRun: false, settings });
+    await runs.finishRun(done.id, "failed", {}, new Date());
+    const stats = await runs.statsSince(new Date(Date.now() - 86_400_000));
+    expect(stats.failed).toBeGreaterThanOrEqual(1);
+    const before = stats.runs;
+    await runs.createSkippedRun({ jobId: null, jobName: "Nightly", settings, reason: "skipped" }, new Date());
+    expect((await runs.statsSince(new Date(Date.now() - 86_400_000))).runs).toBe(before);
+    expect(await runs.recoverInterrupted(new Date())).not.toContain(sk.id);
+    expect((await runs.getRun(sk.id))!.status).toBe("skipped");
+    await sql!`update runs set created_at = now() - interval '200 days' where id = ${sk.id}`;
+    expect(await runs.pruneBefore(new Date(Date.now() - 100 * 86_400_000))).toBeGreaterThanOrEqual(1);
+    expect(await runs.getRun(sk.id)).toBeNull();
+  });
+});

@@ -71,7 +71,7 @@ export const unwiredExecutor: StepExecutor = {
 // ---- core-backed executor ----
 
 export type CoreExecutorDeps = {
-  instances: Pick<InstanceStore, "get" | "getKeyEnc">;
+  instances: Pick<InstanceStore, "get" | "getKeyEnc" | "saveCheck">;
   secretKey: string;
   /** Injectable for tests; default is core's instance check. */
   check?: (instance: Instance) => Promise<InstanceCheck>;
@@ -150,6 +150,17 @@ export function createCoreExecutor(deps: CoreExecutorDeps): StepExecutor {
             return fail(id, instance.alias, redact(`Connection check failed: ${(err as Error).message}`));
           }
           checks.set(id, result);
+          // The same stored check the "Test connection" endpoint keeps; error text and warnings are redacted first.
+          const safe: InstanceCheck = {
+            ...result,
+            error: result.error ? { ...result.error, message: redact(result.error.message) } : null,
+            warnings: result.warnings.map(redact),
+          };
+          try {
+            await deps.instances.saveCheck(id, safe, new Date(result.checkedAt));
+          } catch {
+            /* a failed bookkeeping write never fails or blocks validation */
+          }
           if (!result.ok) return fail(id, instance.alias, redact(`${result.error?.stage ?? "check"} check failed: ${result.error?.message ?? "unknown problem"}`));
           await ctx.log({ level: "info", type: "log", message: `${instance.alias}: connected (Immich ${result.version}).`, data: { instanceId: id } });
           for (const w of result.warnings) await ctx.log({ level: "warning", type: "log", message: `${instance.alias}: ${redact(w)}`, data: { instanceId: id } });

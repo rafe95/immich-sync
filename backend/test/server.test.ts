@@ -29,6 +29,8 @@ beforeAll(async () => {
     instances: { store: instanceStore, secretKey: "k".repeat(32) },
     jobs: svc.jobs,
     runs: svc.runs,
+    dashboard: svc.dashboard,
+    settings: svc.settings,
   });
   base = `http://127.0.0.1:${server.port}`;
 });

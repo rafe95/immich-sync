@@ -3,12 +3,12 @@
 import type { SQL } from "bun";
 import type { StepOptions, Operation, OnError, OnFailure } from "../jobs/validation.ts";
 
-export type RunStatus = "queued" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "interrupted";
+export type RunStatus = "queued" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "interrupted" | "skipped";
 export type RunStepStatus = "pending" | "running" | "completed" | "completed_with_failures" | "error" | "cancelled" | "not_run";
 export type RunTrigger = "manual" | "schedule";
 export type EventLevel = "debug" | "info" | "warning" | "error";
 
-export const TERMINAL_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(["completed", "completed_with_failures", "failed", "cancelled", "interrupted"]);
+export const TERMINAL_RUN_STATUSES: ReadonlySet<RunStatus> = new Set(["completed", "completed_with_failures", "failed", "cancelled", "interrupted", "skipped"]);
 export const isTerminal = (s: RunStatus) => TERMINAL_RUN_STATUSES.has(s);
 
 /** One step of the settings snapshot. Contains aliases and ids only, never URLs or keys. */
@@ -45,6 +45,8 @@ export type RunEvent = { id: number; runId: string; ts: string; level: EventLeve
 export type NewEvent = { level: EventLevel; type: string; message?: string | null; data?: unknown };
 
 export type NewRun = { jobId: string | null; jobName: string; trigger: RunTrigger; startedBy: string; dryRun: boolean; settings: RunSettings };
+/** A schedule firing that did not run: stored as a finished 'skipped' run with one explanatory log event. */
+export type NewSkippedRun = { jobId: string | null; jobName: string; settings: RunSettings; reason: string };
 export type RunListQuery = { limit: number; offset: number; jobId?: string; status?: RunStatus; trigger?: RunTrigger };
 
 export const DEFAULT_RETENTION_DAYS = 90;
@@ -52,12 +54,16 @@ export const RETENTION_SETTING_KEY = "run_retention_days";
 
 export type RunStore = {
   createRun(input: NewRun): Promise<RunRecord>;
+  /** Records a skipped schedule firing (trigger 'schedule', already finished, steps not_run, never lockable). */
+  createSkippedRun(input: NewSkippedRun, at: Date): Promise<RunRecord>;
   getRun(id: string): Promise<RunRecord | null>;
   listRuns(q: RunListQuery): Promise<{ runs: RunRecord[]; total: number }>;
   markRunning(id: string, at: Date): Promise<void>;
   finishRun(id: string, status: RunStatus, summary: unknown, at: Date): Promise<void>;
   updateStep(runId: string, position: number, patch: { status: RunStepStatus; summary?: unknown; startedAt?: Date; finishedAt?: Date }): Promise<void>;
   appendEvent(runId: string, ev: NewEvent): Promise<RunEvent>;
+  /** Run counts since `since`: skipped and still-queued runs are not counted; failed = status failed or interrupted. */
+  statsSince(since: Date): Promise<{ runs: number; failed: number }>;
   /** Events with id greater than `after`, oldest first. */
   listEvents(runId: string, after: number, limit: number): Promise<RunEvent[]>;
   /** Marks queued/running runs (left over from a previous process) as interrupted; returns their ids. */
@@ -114,6 +120,19 @@ export function pgRunStore(sql: SQL): RunStore {
       });
       return (await this.getRun(id))!;
     },
+    async createSkippedRun(input, at) {
+      const id = await sql.begin(async (tx) => {
+        const [r] = await tx.unsafe(
+          `insert into runs (job_id, job_name, trigger, started_by, dry_run, status, settings, summary, created_at, finished_at)
+           values ($1, $2, 'schedule', 'schedule', false, 'skipped', $3::text::jsonb, $4::text::jsonb, $5, $5) returning id`,
+          [input.jobId, input.jobName, JSON.stringify(input.settings), JSON.stringify({ skipped: true, reason: input.reason }), at],
+        );
+        for (const s of input.settings.steps) await tx`insert into run_steps (run_id, position, status) values (${r.id}, ${s.position}, 'not_run')`;
+        await tx`insert into run_events (run_id, level, type, message, ts) values (${r.id}, 'warning', 'log', ${input.reason}, ${at})`;
+        return r.id as string;
+      });
+      return (await this.getRun(id))!;
+    },
     async getRun(id) {
       return (await pageSteps(await sql`select * from runs where id = ${id}`))[0] ?? null;
     },
@@ -148,6 +167,11 @@ export function pgRunStore(sql: SQL): RunStore {
     },
     async listEvents(runId, after, limit) {
       return (await sql`select * from run_events where run_id = ${runId} and id > ${after} order by id limit ${limit}`).map(toEvent);
+    },
+    async statsSince(since) {
+      const [r] = await sql`select count(*)::int as runs, (count(*) filter (where status in ('failed', 'interrupted')))::int as failed
+        from runs where created_at >= ${since} and status not in ('skipped', 'queued')`;
+      return { runs: r.runs, failed: r.failed };
     },
     async recoverInterrupted(at) {
       return sql.begin(async (tx) => {
@@ -200,6 +224,16 @@ export function memoryRunStore(): RunStore & { events: RunEvent[]; runs: Map<str
       runs.set(r.id, r);
       return copy(r);
     },
+    async createSkippedRun(input, at) {
+      const r: RunRecord = {
+        id: crypto.randomUUID(), jobId: input.jobId, jobName: input.jobName, trigger: "schedule", startedBy: "schedule", dryRun: false,
+        status: "skipped", settings: copy(input.settings), summary: { skipped: true, reason: input.reason }, createdAt: at.toISOString(), startedAt: null, finishedAt: at.toISOString(),
+        steps: input.settings.steps.map((s) => ({ position: s.position, status: "not_run", summary: null, startedAt: null, finishedAt: null })),
+      };
+      runs.set(r.id, r);
+      events.push({ id: nextId++, runId: r.id, ts: at.toISOString(), level: "warning", type: "log", message: input.reason, data: null });
+      return copy(r);
+    },
     async getRun(id) {
       const r = runs.get(id);
       return r ? copy(r) : null;
@@ -230,6 +264,10 @@ export function memoryRunStore(): RunStore & { events: RunEvent[]; runs: Map<str
     },
     async listEvents(runId, after, limit) {
       return events.filter((e) => e.runId === runId && e.id > after).slice(0, limit).map(copy);
+    },
+    async statsSince(since) {
+      const rs = [...runs.values()].filter((r) => new Date(r.createdAt) >= since && r.status !== "skipped" && r.status !== "queued");
+      return { runs: rs.length, failed: rs.filter((r) => r.status === "failed" || r.status === "interrupted").length };
     },
     async recoverInterrupted(at) {
       const ids: string[] = [];

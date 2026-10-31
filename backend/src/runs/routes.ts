@@ -13,7 +13,7 @@ export type RunRouteDeps = {
   heartbeatMs?: number;
 };
 
-const STATUSES = new Set<RunStatus>(["queued", "running", "completed", "completed_with_failures", "failed", "cancelled", "interrupted"]);
+const STATUSES = new Set<RunStatus>(["queued", "running", "completed", "completed_with_failures", "failed", "cancelled", "interrupted", "skipped"]);
 const EVENT_PAGE = 500;
 
 function intParam(url: URL, name: string, def: number, min: number, max: number): number {

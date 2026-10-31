@@ -27,7 +27,7 @@ export type SchedulerLog = (level: "info" | "warning" | "error", message: string
 
 export type SchedulerDeps = {
   jobs: Pick<JobStore, "get" | "listSchedules">;
-  runs: Pick<RunManager, "start" | "activeRunForJob">;
+  runs: Pick<RunManager, "start" | "activeRunForJob" | "recordSkipped">;
   /** When the job last started a schedule-triggered run (for catch-up); null if never. */
   lastScheduledRunAt?: (jobId: string) => Promise<Date | null>;
   timers?: Timers;
@@ -51,6 +51,15 @@ export function createScheduler(deps: SchedulerDeps) {
 
   const cronOf = (s: ScheduleRecord) => new Cron(s.cron, { timezone: s.timezone, paused: true });
 
+  /** Skipped firings are written to history (status 'skipped'), not only to the process log. */
+  async function recordSkip(jobId: string, reason: string) {
+    try {
+      await deps.runs.recordSkipped(jobId, reason);
+    } catch (err) {
+      log("error", `Could not record the skipped run: ${(err as Error).message}`, { jobId });
+    }
+  }
+
   async function fire(s: ScheduleRecord, reason: "due" | "catch-up"): Promise<"started" | "skipped"> {
     const job = await deps.jobs.get(s.jobId);
     if (!job) return "skipped";
@@ -58,10 +67,12 @@ export function createScheduler(deps: SchedulerDeps) {
     const active = deps.runs.activeRunForJob(s.jobId);
     if (active) {
       log("warning", `Skipped ${tag}: the previous run (${active}) is still queued or running.`, { jobId: s.jobId, activeRunId: active });
+      await recordSkip(s.jobId, "skipped: previous run still active");
       return "skipped";
     }
     if (hasMoveStep(job.steps) && !s.moveConfirmedAt) {
       log("warning", `Skipped ${tag}: the job moves assets and the schedule has no move confirmation.`, { jobId: s.jobId });
+      await recordSkip(s.jobId, "skipped: this job moves assets and its schedule has no move confirmation");
       return "skipped";
     }
     try {

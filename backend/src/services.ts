@@ -15,10 +15,13 @@ export type JobRunServicesOptions = {
   defaultTimezone?: string;
   heartbeatMs?: number;
   scheduler?: Pick<SchedulerDeps, "timers" | "log">;
+  /** Injectable clocks for tests. */
+  nowMs?: () => number;
+  now?: () => Date;
 };
 
 export function createJobRunServices(o: JobRunServicesOptions) {
-  const manager = createRunManager({ store: o.runs, jobs: o.jobs, instances: o.instances, executor: o.executor });
+  const manager = createRunManager({ store: o.runs, jobs: o.jobs, instances: o.instances, executor: o.executor, nowMs: o.nowMs });
   const scheduler = createScheduler({
     jobs: o.jobs,
     runs: manager,
@@ -41,5 +44,7 @@ export function createJobRunServices(o: JobRunServicesOptions) {
       defaultTimezone: o.defaultTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
     },
     runs: { runs: manager, heartbeatMs: o.heartbeatMs },
+    dashboard: { instances: o.instances, jobs: o.jobs, runs: o.runs, now: o.now },
+    settings: { runs: o.runs },
   };
 }

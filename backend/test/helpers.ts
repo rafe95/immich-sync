@@ -43,6 +43,8 @@ export function startTestServer(overrides: {
     instances: { store, secretKey: SECRET, ...overrides.instances },
     jobs: svc.jobs,
     runs: svc.runs,
+    dashboard: svc.dashboard,
+    settings: svc.settings,
   });
   const base = `http://127.0.0.1:${server.port}`;
   return { server, base, store, jobStore, runStore, manager: svc.manager, stop: () => server.stop(true) };

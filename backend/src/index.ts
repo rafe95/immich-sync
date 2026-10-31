@@ -4,7 +4,8 @@ import { pgInstanceStore } from "./instances/store.ts";
 import { connectDb, migrate } from "./db/index.ts";
 import { pgJobStore } from "./jobs/store.ts";
 import { createCoreExecutor } from "./runs/executor.ts";
-import { pgRunStore, pruneHistory } from "./runs/store.ts";
+import { pgRunStore } from "./runs/store.ts";
+import { createRetentionPruner } from "./settings.ts";
 import { createJobRunServices } from "./services.ts";
 import { createServer } from "./server.ts";
 
@@ -30,8 +31,7 @@ async function main() {
   const services = createJobRunServices({ instances: instanceStore, jobs: pgJobStore(db.sql), runs: runStore, executor });
   const interrupted = await services.manager.recoverInterrupted();
   if (interrupted.length) console.log(`Marked ${interrupted.length} run(s) from the previous process as interrupted.`);
-  const pruned = await pruneHistory(runStore);
-  if (pruned) console.log(`Pruned ${pruned} run(s) past the history retention.`);
+  const pruner = createRetentionPruner({ runs: runStore }); // prunes now, then daily
 
   const server = createServer({
     hostname: config.host,
@@ -42,12 +42,16 @@ async function main() {
     instances: { store: instanceStore, secretKey: config.secretKey },
     jobs: services.jobs,
     runs: services.runs,
+    dashboard: services.dashboard,
+    settings: services.settings,
   });
+  await pruner.start();
   await services.scheduler.start();
   console.log(`immich-sync listening on http://${config.host}:${server.port}`);
 
   const shutdown = async () => {
     services.scheduler.stop();
+    pruner.stop();
     services.manager.abortAll();
     await server.stop();
     await services.manager.whenIdle();
