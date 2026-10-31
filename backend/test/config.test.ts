@@ -17,7 +17,13 @@ describe("loadConfig", () => {
       secretKey: valid.SECRET_KEY,
       staticDir: null,
       cookieSecure: "auto",
+      trustProxy: false,
     });
+  });
+
+  test("TRUST_PROXY defaults to false and must be true or false", () => {
+    expect(loadConfig({ ...valid, TRUST_PROXY: "true" }).trustProxy).toBe(true);
+    expect(() => loadConfig({ ...valid, TRUST_PROXY: "yes" })).toThrow(ConfigError);
   });
 
   test("HOST overrides the loopback default", () => {

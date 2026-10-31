@@ -5,6 +5,9 @@
 services:
   app:
     build: .
+    # To run the published image instead of building locally, replace the two lines below with
+    #   image: ghcr.io/rafe95/immich-sync:<tag>   (e.g. 0.1.0; see "Releases" in README.md)
+    # and start with `docker compose up -d` (use `pull` to update). Keep `build: .` to build from source.
     image: immich-sync:local
     restart: unless-stopped
     depends_on:
@@ -17,6 +20,7 @@ services:
       DATABASE_URL: postgres://immich_sync:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/immich_sync
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env} # encrypts stored API keys
+      TRUST_PROXY: ${TRUST_PROXY:-false} # true only behind your own reverse proxy: login limits then use X-Forwarded-For
 
   db:
     image: postgres:17-alpine

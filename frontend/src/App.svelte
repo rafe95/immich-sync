@@ -7,16 +7,18 @@
   import Instances from "./Instances.svelte";
   import Login from "./Login.svelte";
   import Run from "./Run.svelte";
+  import Settings from "./Settings.svelte";
   import History from "./History.svelte";
   import { formFromRun, type Run as RunRecord, type RunForm } from "./lib/runs.ts";
 
-  // The five screens from SPEC.md, "User interface". Dashboard is built by its own component.
+  // The screens from SPEC.md, "User interface". Dashboard is built by its own component.
   const screens = [
     { id: "dashboard", label: "Dashboard", enabled: true },
     { id: "run", label: "Run", enabled: true },
     { id: "jobs", label: "Jobs", enabled: true },
     { id: "history", label: "History", enabled: true },
     { id: "instances", label: "Instances", enabled: true },
+    { id: "settings", label: "Settings", enabled: true },
   ] as const;
 
   let current = $state<(typeof screens)[number]["id"]>("dashboard");
@@ -96,6 +98,8 @@
       <main class="space-y-4 p-6">
         {#if current === "instances"}
           <Instances />
+        {:else if current === "settings"}
+          <Settings />
         {:else if current === "run"}
           <Run bind:activeRunId {prefill} />
         {:else if current === "history"}

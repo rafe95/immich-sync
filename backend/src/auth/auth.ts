@@ -4,6 +4,7 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
+import type { SQL } from "bun";
 import { errorResponse, HttpError, json, readJsonObject } from "../http.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import { hashToken, newToken, SESSION_TTL_MS, type Session, type SessionStore } from "./sessions.ts";
@@ -11,8 +12,68 @@ import { hashToken, newToken, SESSION_TTL_MS, type Session, type SessionStore } 
 export const SESSION_COOKIE = "immich_sync_session";
 export const CSRF_HEADER = "x-csrf-token";
 
+/** Where the changed admin password hash lives. While none is stored, ADMIN_PASSWORD from the environment is the credential. */
+export type PasswordStore = {
+  getHash(): Promise<string | null>;
+  setHash(hash: string): Promise<void>;
+};
+
+export const PASSWORD_SETTING_KEY = "admin_password_hash";
+export const MIN_PASSWORD_LENGTH = 12;
+export const MAX_PASSWORD_LENGTH = 256;
+
+export function memoryPasswordStore(): PasswordStore & { hash: string | null } {
+  const store = {
+    hash: null as string | null,
+    async getHash() {
+      return store.hash;
+    },
+    async setHash(h: string) {
+      store.hash = h;
+    },
+  };
+  return store;
+}
+
+export function pgPasswordStore(sql: SQL): PasswordStore {
+  return {
+    async getHash() {
+      const [r] = await sql`select value from settings where key = ${PASSWORD_SETTING_KEY}`;
+      if (!r) return null;
+      const v = typeof r.value === "string" && r.value.startsWith('"') ? JSON.parse(r.value) : r.value;
+      return typeof v === "string" && v ? v : null;
+    },
+    async setHash(hash) {
+      await sql`insert into settings (key, value) values (${PASSWORD_SETTING_KEY}, ${JSON.stringify(hash)}::text::jsonb)
+        on conflict (key) do update set value = excluded.value`;
+    },
+  };
+}
+
+/**
+ * Key for login backoff. Behind a reverse proxy every request has the proxy's socket address, so
+ * only when the operator opts in (TRUST_PROXY=true) the first X-Forwarded-For hop is used.
+ */
+export function clientKeyFor(req: Request, socketAddress: string | undefined, trustProxy: boolean): string {
+  if (trustProxy) {
+    const hop = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    if (hop) return hop.slice(0, 64);
+  }
+  return socketAddress ?? "unknown";
+}
+
+/** Returns a problem message for an unacceptable new password, or null. */
+export function newPasswordProblem(newPassword: string, current: string): string | null {
+  if (newPassword.length < MIN_PASSWORD_LENGTH) return `The new password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+  if (newPassword.length > MAX_PASSWORD_LENGTH) return `The new password must be at most ${MAX_PASSWORD_LENGTH} characters.`;
+  if (newPassword === current) return "The new password must differ from the current one.";
+  return null;
+}
+
 export type AuthOptions = {
   adminPassword: string;
+  /** Stored password hash; takes precedence over adminPassword once set. Defaults to in-memory. */
+  passwords?: PasswordStore;
   sessions: SessionStore;
   /** "auto": Secure when the request arrived over HTTPS (directly or via X-Forwarded-Proto). */
   secureCookies?: boolean | "auto";
@@ -45,6 +106,7 @@ export function createAuth(options: AuthOptions) {
   const { sessions } = options;
   const limiter = options.limiter ?? new LoginRateLimiter();
   const now = options.now ?? (() => new Date());
+  const passwords = options.passwords ?? memoryPasswordStore();
   const secureMode = options.secureCookies ?? "auto";
 
   const isSecure = (req: Request) =>
@@ -81,6 +143,30 @@ export function createAuth(options: AuthOptions) {
     };
   }
 
+  /** Checks against the stored hash when there is one, otherwise the environment password. */
+  async function passwordMatches(candidate: string): Promise<boolean> {
+    const hash = await passwords.getHash();
+    if (hash) {
+      try {
+        return await Bun.password.verify(candidate, hash);
+      } catch {
+        return false; // a corrupt stored hash fails closed
+      }
+    }
+    return safeEqual(candidate, options.adminPassword);
+  }
+
+  async function startSession(req: Request, status = 200) {
+    const t = now();
+    await sessions.purgeExpired(t);
+    const token = newToken();
+    const session: Session = { csrfToken: newToken(), expiresAt: new Date(t.getTime() + SESSION_TTL_MS) };
+    await sessions.create(hashToken(token), session);
+    return json({ authenticated: true, csrfToken: session.csrfToken }, status, {
+      "set-cookie": cookie(req, token, SESSION_TTL_MS / 1000),
+    });
+  }
+
   const login = async (req: Request, clientKey: string): Promise<Response> => {
     const wait = limiter.retryAfterSeconds(clientKey);
     if (wait > 0) {
@@ -94,20 +180,37 @@ export function createAuth(options: AuthOptions) {
       throw err;
     }
     const password = typeof body.password === "string" ? body.password : "";
-    if (!password || !safeEqual(password, options.adminPassword)) {
+    if (!password || !(await passwordMatches(password))) {
       limiter.recordFailure(clientKey);
       return json({ message: "Invalid password." }, 401);
     }
     limiter.recordSuccess(clientKey);
-    const t = now();
-    await sessions.purgeExpired(t);
-    const token = newToken();
-    const session: Session = { csrfToken: newToken(), expiresAt: new Date(t.getTime() + SESSION_TTL_MS) };
-    await sessions.create(hashToken(token), session);
-    return json({ authenticated: true, csrfToken: session.csrfToken }, 200, {
-      "set-cookie": cookie(req, token, SESSION_TTL_MS / 1000),
-    });
+    return startSession(req);
   };
+
+  /** Authenticated + CSRF (via protect). Same failure backoff as login, keyed by the client. */
+  const changePassword = (clientKeyOf: (req: Request) => string) =>
+    protect(async (req) => {
+      const clientKey = clientKeyOf(req);
+      const wait = limiter.retryAfterSeconds(clientKey);
+      if (wait > 0) {
+        return json({ message: "Too many failed attempts. Try again later." }, 429, { "retry-after": String(wait) });
+      }
+      const body = await readJsonObject(req);
+      const current = typeof body.currentPassword === "string" ? body.currentPassword : "";
+      const next = typeof body.newPassword === "string" ? body.newPassword : "";
+      if (!current || !(await passwordMatches(current))) {
+        limiter.recordFailure(clientKey);
+        return json({ message: "The current password is incorrect." }, 403);
+      }
+      limiter.recordSuccess(clientKey);
+      const problem = newPasswordProblem(next, current);
+      if (problem) throw new HttpError(400, problem);
+      await passwords.setHash(await Bun.password.hash(next, { algorithm: "argon2id" }));
+      // End every session, including this one, and hand back a fresh token and CSRF secret.
+      await sessions.deleteAll();
+      return startSession(req);
+    });
 
   const logout = protect(async (req) => {
     await sessions.delete(hashToken(readCookie(req, SESSION_COOKIE)!));
@@ -116,7 +219,7 @@ export function createAuth(options: AuthOptions) {
 
   const me = protect((_req, session) => json({ authenticated: true, csrfToken: session.csrfToken }));
 
-  return { protect, login, logout, me };
+  return { protect, login, logout, me, changePassword };
 }
 
 export type Auth = ReturnType<typeof createAuth>;

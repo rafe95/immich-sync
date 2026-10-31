@@ -1,4 +1,5 @@
 import { ConfigError, loadConfig } from "./config.ts";
+import { pgPasswordStore } from "./auth/auth.ts";
 import { pgSessionStore } from "./auth/sessions.ts";
 import { pgInstanceStore } from "./instances/store.ts";
 import { connectDb, migrate } from "./db/index.ts";
@@ -38,12 +39,13 @@ async function main() {
     port: config.port,
     staticDir: config.staticDir,
     db,
-    auth: { adminPassword: config.adminPassword, sessions: pgSessionStore(db.sql), secureCookies: config.cookieSecure },
+    auth: { adminPassword: config.adminPassword, passwords: pgPasswordStore(db.sql), sessions: pgSessionStore(db.sql), secureCookies: config.cookieSecure },
     instances: { store: instanceStore, secretKey: config.secretKey },
     jobs: services.jobs,
     runs: services.runs,
     dashboard: services.dashboard,
     settings: services.settings,
+    trustProxy: config.trustProxy,
   });
   await pruner.start();
   await services.scheduler.start();

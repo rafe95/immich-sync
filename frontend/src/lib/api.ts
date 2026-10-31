@@ -102,6 +102,12 @@ export function createApiClient(options: ApiClientOptions = {}) {
         csrfToken = null;
       }
     },
+    /** Ends every other session; the response carries this session's rotated CSRF token. */
+    async changePassword(currentPassword: string, newPassword: string) {
+      remember(await request<{ csrfToken: string }>("POST", "/api/auth/password", { currentPassword, newPassword }));
+    },
+    getRetention: async () => (await request<{ days: number }>("GET", "/api/settings/retention")).days,
+    putRetention: async (days: number) => (await request<{ days: number }>("PUT", "/api/settings/retention", { days })).days,
     listInstances: async () => (await request<{ instances: Instance[] }>("GET", "/api/instances")).instances,
     createInstance: (input: InstanceInput) => request<Instance>("POST", "/api/instances", input),
     updateInstance: (id: string, input: InstanceInput) => request<Instance>("PATCH", `/api/instances/${id}`, input),

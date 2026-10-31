@@ -6,6 +6,7 @@ import { memoryRunStore, type RunStore } from "../src/runs/store.ts";
 import { unwiredExecutor, type StepExecutor } from "../src/runs/executor.ts";
 import { createJobRunServices } from "../src/services.ts";
 import { createServer, type ServerDeps } from "../src/server.ts";
+import type { PasswordStore } from "../src/auth/auth.ts";
 import type { SessionStore } from "../src/auth/sessions.ts";
 
 export const PASSWORD = "correct horse battery";
@@ -17,6 +18,8 @@ export function startTestServer(overrides: {
   sessions?: SessionStore;
   limiter?: LoginRateLimiter;
   secureCookies?: boolean | "auto";
+  trustProxy?: boolean;
+  passwords?: PasswordStore;
   jobStore?: JobStore;
   runStore?: RunStore;
   executor?: StepExecutor;
@@ -38,6 +41,7 @@ export function startTestServer(overrides: {
       adminPassword: PASSWORD,
       sessions: overrides.sessions ?? memorySessionStore(),
       limiter: overrides.limiter,
+      passwords: overrides.passwords,
       secureCookies: overrides.secureCookies,
     },
     instances: { store, secretKey: SECRET, ...overrides.instances },
@@ -45,6 +49,7 @@ export function startTestServer(overrides: {
     runs: svc.runs,
     dashboard: svc.dashboard,
     settings: svc.settings,
+    trustProxy: overrides.trustProxy,
   });
   const base = `http://127.0.0.1:${server.port}`;
   return { server, base, store, jobStore, runStore, manager: svc.manager, stop: () => server.stop(true) };

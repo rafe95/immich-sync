@@ -12,6 +12,8 @@ export type Config = {
   staticDir: string | null;
   /** Session cookie Secure flag: "auto" follows the request (HTTPS or X-Forwarded-Proto). */
   cookieSecure: boolean | "auto";
+  /** Use the first X-Forwarded-For hop as the login backoff key. Only enable behind a proxy that sets it. */
+  trustProxy: boolean;
 };
 
 export class ConfigError extends Error {
@@ -49,6 +51,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!["auto", "true", "false"].includes(cookieText)) problems.push("COOKIE_SECURE must be auto, true or false.");
   const cookieSecure = cookieText === "auto" ? "auto" : cookieText === "true";
 
+  const trustText = (get("TRUST_PROXY") || "false").toLowerCase();
+  if (!["true", "false"].includes(trustText)) problems.push("TRUST_PROXY must be true or false.");
+
   if (problems.length) throw new ConfigError(problems);
-  return { host, port, databaseUrl, adminPassword, secretKey, staticDir: get("STATIC_DIR") || null, cookieSecure };
+  return { host, port, databaseUrl, adminPassword, secretKey, staticDir: get("STATIC_DIR") || null, cookieSecure, trustProxy: trustText === "true" };
 }

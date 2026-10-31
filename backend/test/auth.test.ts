@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { LoginRateLimiter } from "../src/auth/rate-limit.ts";
-import { createAuth, safeEqual } from "../src/auth/auth.ts";
+import { clientKeyFor, createAuth, memoryPasswordStore, safeEqual } from "../src/auth/auth.ts";
 import { memorySessionStore } from "../src/auth/sessions.ts";
 import { loggedIn, PASSWORD, startTestServer } from "./helpers.ts";
 
@@ -138,5 +138,103 @@ describe("LoginRateLimiter", () => {
     l.recordFailure("b");
     t += 100_001;
     expect(l.retryAfterSeconds("b")).toBe(0);
+  });
+});
+
+describe("change password", () => {
+  const NEW = "a much longer new passphrase";
+  const change = (base: string, cookie: string, csrf: string | null, body: unknown) =>
+    fetch(`${base}/api/auth/password`, {
+      method: "POST",
+      headers: { cookie, ...(csrf ? { "x-csrf-token": csrf } : {}) },
+      body: JSON.stringify(body),
+    });
+
+  test("requires a session and CSRF", async () => {
+    const { base } = start();
+    expect((await fetch(`${base}/api/auth/password`, { method: "POST", body: "{}" })).status).toBe(401);
+    const { cookie } = await loggedIn(base);
+    expect((await change(base, cookie, null, { currentPassword: PASSWORD, newPassword: NEW })).status).toBe(403);
+  });
+
+  test("rejects a wrong current password, short, equal and malformed input", async () => {
+    const passwords = memoryPasswordStore();
+    const { base } = start({ passwords });
+    const { cookie, csrfToken } = await loggedIn(base);
+    expect((await change(base, cookie, csrfToken, { currentPassword: "wrong", newPassword: NEW })).status).toBe(403);
+    expect((await change(base, cookie, csrfToken, { currentPassword: PASSWORD, newPassword: "short" })).status).toBe(400);
+    expect((await change(base, cookie, csrfToken, { currentPassword: PASSWORD, newPassword: PASSWORD })).status).toBe(400); // equal (PASSWORD is 21 chars)
+    expect((await change(base, cookie, csrfToken, { currentPassword: PASSWORD })).status).toBe(400);
+    expect((await fetch(`${base}/api/auth/password`, { method: "POST", headers: { cookie, "x-csrf-token": csrfToken }, body: "[]" })).status).toBe(400);
+    expect(passwords.hash).toBeNull();
+    expect((await login(base, PASSWORD)).status).toBe(200); // unchanged
+  });
+
+  test("stores an argon2id hash, switches the credential, ends all sessions and rotates the current one", async () => {
+    const passwords = memoryPasswordStore();
+    const { base } = start({ passwords });
+    const a = await loggedIn(base);
+    const b = await loggedIn(base);
+    const res = await change(base, a.cookie, a.csrfToken, { currentPassword: PASSWORD, newPassword: NEW });
+    expect(res.status).toBe(200);
+    expect(passwords.hash).toStartWith("$argon2id$");
+    expect(passwords.hash).not.toContain(NEW);
+    const fresh = (await res.json()) as { csrfToken: string };
+    const freshCookie = res.headers.get("set-cookie")!.split(";")[0]!;
+    expect(fresh.csrfToken).not.toBe(a.csrfToken);
+    expect(freshCookie).not.toBe(a.cookie);
+    // old sessions are gone, the rotated one works
+    expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: a.cookie } })).status).toBe(401);
+    expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: b.cookie } })).status).toBe(401);
+    expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: freshCookie } })).status).toBe(200);
+    // the stored hash now wins over ADMIN_PASSWORD
+    expect((await login(base, PASSWORD)).status).toBe(401);
+    expect((await login(base, NEW)).status).toBe(200);
+    // and the new one must differ from the (new) current
+    expect((await change(base, freshCookie, fresh.csrfToken, { currentPassword: NEW, newPassword: NEW })).status).toBe(400);
+  });
+
+  test("a corrupt stored hash fails closed", async () => {
+    const passwords = memoryPasswordStore();
+    passwords.hash = "not-a-hash";
+    const { base } = start({ passwords });
+    expect((await login(base, PASSWORD)).status).toBe(401);
+  });
+
+  test("wrong current passwords share the login backoff", async () => {
+    const { base } = start({ limiter: new LoginRateLimiter({ freeAttempts: 2, baseDelayMs: 60_000 }) });
+    const { cookie, csrfToken } = await loggedIn(base);
+    for (let i = 0; i < 2; i++) expect((await change(base, cookie, csrfToken, { currentPassword: "bad", newPassword: NEW })).status).toBe(403);
+    const blocked = await change(base, cookie, csrfToken, { currentPassword: PASSWORD, newPassword: NEW });
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+});
+
+describe("login backoff client key", () => {
+  const req = (xff?: string) => new Request("http://x/", { headers: xff ? { "x-forwarded-for": xff } : {} });
+
+  test("clientKeyFor ignores X-Forwarded-For unless trusted", () => {
+    expect(clientKeyFor(req("1.2.3.4, 10.0.0.1"), "172.18.0.2", false)).toBe("172.18.0.2");
+    expect(clientKeyFor(req("1.2.3.4, 10.0.0.1"), "172.18.0.2", true)).toBe("1.2.3.4");
+    expect(clientKeyFor(req(), "172.18.0.2", true)).toBe("172.18.0.2");
+    expect(clientKeyFor(req(), undefined, false)).toBe("unknown");
+  });
+
+  const failures = async (base: string, xff: string) => {
+    for (let i = 0; i < 2; i++) await login(base, "bad", { "x-forwarded-for": xff });
+    return (await login(base, PASSWORD, { "x-forwarded-for": xff })).status;
+  };
+
+  test("untrusted: a spoofed header cannot dodge or split the lockout (all share the socket address)", async () => {
+    const { base } = start({ limiter: new LoginRateLimiter({ freeAttempts: 2, baseDelayMs: 60_000 }) });
+    expect(await failures(base, "1.1.1.1")).toBe(429);
+    expect((await login(base, PASSWORD, { "x-forwarded-for": "2.2.2.2" })).status).toBe(429);
+  });
+
+  test("trusted: clients behind the proxy are throttled separately", async () => {
+    const { base } = start({ trustProxy: true, limiter: new LoginRateLimiter({ freeAttempts: 2, baseDelayMs: 60_000 }) });
+    expect(await failures(base, "1.1.1.1")).toBe(429);
+    expect((await login(base, PASSWORD, { "x-forwarded-for": "2.2.2.2" })).status).toBe(200);
   });
 });

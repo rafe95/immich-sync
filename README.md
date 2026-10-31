@@ -28,6 +28,8 @@ Docker and Podman both work. `bun run app:up` picks the runtime automatically (D
 
 Then open http://localhost:8080.
 
+Passwords and proxies: `ADMIN_PASSWORD` is the bootstrap and recovery login. Settings > Change password (`POST /api/auth/password`, at least 12 characters) stores an argon2id hash in the `settings` table (key `admin_password_hash`) that takes precedence from then on, and signs out all other sessions. To fall back to `ADMIN_PASSWORD`, run `delete from settings where key = 'admin_password_hash';` against the database. Failed logins (and failed password confirmations) back off per client address; behind a reverse proxy every request shares the proxy's address, so set `TRUST_PROXY=true` (default `false`) to key the backoff on the first `X-Forwarded-For` hop. Enable it only when a proxy you control sets that header and the app is not reachable directly, otherwise clients can spoof it.
+
 - The app listens on **localhost only** by default (`127.0.0.1:8080`). It holds API keys that can trash photos, so put it behind a reverse proxy with HTTPS before exposing it on a network.
 - PostgreSQL data lives in `./postgres`. No photos are stored by the app: originals are streamed from one Immich server to the other.
 
@@ -75,6 +77,14 @@ Open http://localhost:5173.
 2. **Backend**: login, instances API (encrypted keys, Test connection), jobs, job runner with locks, live logs over SSE, history, scheduler.
 3. **Frontend**: Run form, console, Instances and History are done; the Jobs screen and batch editor are in place; Dashboard is being added.
 4. **Release**: multi-arch image (amd64, arm64) on GHCR, docs.
+
+## Releases
+
+Pushing a tag that starts with `v` (for example `v0.1.0`) runs `.github/workflows/release.yml`, which builds a multi-arch image (linux/amd64 and linux/arm64) and pushes it to `ghcr.io/rafe95/immich-sync`. Tags are `0.1.0`, `0.1`, `0` (not for `v0.x`) and `latest` (stable tags only, not pre-releases like `v0.2.0-rc.1`). The workflow can also be started manually from the Actions tab, which pushes a `sha-...` tag. CI (`.github/workflows/ci.yml`) runs typecheck, build and tests, including the database tests, on every push and pull request to `main`. The workflows have not been run on GitHub yet.
+
+To run the published image, edit the `app` service in `docker-compose.yml` as described in its comment (use `image: ghcr.io/rafe95/immich-sync:<tag>` and drop `build: .`), then `docker compose up -d`. A new GHCR package is private until its visibility is changed in the GitHub package settings.
+
+The licence is not chosen yet (see below), so published images carry no licence label.
 
 ## License
 

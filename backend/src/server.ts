@@ -2,7 +2,7 @@
 
 import { join, normalize } from "node:path";
 import pkg from "../package.json" with { type: "json" };
-import { createAuth, type AuthOptions } from "./auth/auth.ts";
+import { clientKeyFor, createAuth, type AuthOptions } from "./auth/auth.ts";
 import { createDashboardRoutes, type DashboardDeps } from "./dashboard.ts";
 import { json } from "./http.ts";
 import { createSettingsRoutes, type SettingsDeps } from "./settings.ts";
@@ -22,6 +22,8 @@ export type ServerDeps = {
   runs: RunRouteDeps;
   dashboard: DashboardDeps;
   settings: SettingsDeps;
+  /** Trust X-Forwarded-For for the login backoff key (TRUST_PROXY). */
+  trustProxy?: boolean;
 };
 
 export function createServer(deps: ServerDeps) {
@@ -31,7 +33,7 @@ export function createServer(deps: ServerDeps) {
   const runs = createRunRoutes(deps.runs);
   const dashboard = createDashboardRoutes(deps.dashboard);
   const settings = createSettingsRoutes(deps.settings);
-  const clientKey = (req: Request): string => server.requestIP(req)?.address ?? "unknown";
+  const clientKey = (req: Request): string => clientKeyFor(req, server.requestIP(req)?.address, deps.trustProxy ?? false);
   // Every /api route except health and login goes through auth.protect (session + CSRF).
   const p = auth.protect;
 
@@ -48,6 +50,7 @@ export function createServer(deps: ServerDeps) {
       "/api/auth/login": { POST: (req) => auth.login(req, clientKey(req)) },
       "/api/auth/logout": { POST: auth.logout },
       "/api/auth/me": { GET: auth.me },
+      "/api/auth/password": { POST: auth.changePassword(clientKey) },
       "/api/instances": { GET: p(instances.list), POST: p(instances.create) },
       "/api/instances/:id": { GET: p(instances.get), PATCH: p(instances.update), DELETE: p(instances.remove) },
       "/api/instances/:id/check": { POST: p(instances.check) },

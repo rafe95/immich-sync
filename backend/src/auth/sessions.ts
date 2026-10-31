@@ -11,6 +11,8 @@ export type SessionStore = {
   get(idHash: string, now: Date): Promise<Session | null>;
   delete(idHash: string): Promise<void>;
   purgeExpired(now: Date): Promise<void>;
+  /** Ends every session (used when the password changes). */
+  deleteAll(): Promise<void>;
 };
 
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -34,6 +36,9 @@ export function memorySessionStore(): SessionStore {
     async purgeExpired(now) {
       for (const [k, s] of rows) if (s.expiresAt <= now) rows.delete(k);
     },
+    async deleteAll() {
+      rows.clear();
+    },
   };
 }
 
@@ -51,6 +56,9 @@ export function pgSessionStore(sql: SQL): SessionStore {
     },
     async purgeExpired(now) {
       await sql`delete from sessions where expires_at <= ${now}`;
+    },
+    async deleteAll() {
+      await sql`delete from sessions`;
     },
   };
 }
