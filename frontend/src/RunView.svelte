@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Console from "./Console.svelte";
+  import RunDiagram from "./flow/RunDiagram.svelte";
   import { createRunEvents, type RunEvents } from "./lib/runEvents.svelte.ts";
   import { api } from "./lib/session.svelte.ts";
   import { formFromRun, isTerminal, logAsJson, logAsText, operationLabel, statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
@@ -39,6 +40,7 @@
       mode = null;
       notice = null;
       cancelling = false;
+      stepFilter = null;
       void load();
     }
   });
@@ -86,6 +88,7 @@
 
   // One event stream per run, handed to the console (and later the diagram).
   let events = $state<RunEvents | null>(null);
+  let stepFilter = $state<number | null>(null);
   $effect(() => {
     if (!mode) return;
     const e = createRunEvents(api, runId, mode, () => void ended());
@@ -135,8 +138,12 @@
     </div>
   {/if}
 
+  {#if run && events && run.settings.steps.length}
+    <RunDiagram {run} progress={events.state} bind:selected={stepFilter} />
+  {/if}
+
   {#if events}
-    <Console {events} />
+    <Console {events} {stepFilter} />
   {/if}
 
   {#if run && finished}
