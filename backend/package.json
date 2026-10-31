@@ -9,6 +9,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@immich-sync/core": "workspace:*"
+    "@immich-sync/core": "workspace:*",
+    "croner": "^11.0.0"
   }
 }

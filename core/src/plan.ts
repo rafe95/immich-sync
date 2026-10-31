@@ -1,25 +1,36 @@
 /** Read-only transfer planning for copy and move operations. */
 
+import { describeHttpError } from "./http-error.ts";
 import {
   AssetTypeEnum,
   AssetVisibility,
   getAssetInfo,
-  isHttpError,
   type AssetResponseDto,
   type SearchFilter,
 } from "@immich/sdk";
 import { AssetSearchError, collectAssets, findAssetsByChecksum } from "./asset-search.ts";
 import { checkInstance } from "./check.ts";
 import { requestOpts, validateInstanceInput, type Instance } from "./instance.ts";
-import type { Role } from "./permissions.ts";
+import { checkPermissions, metadataSyncPermissions, type MetadataSyncFlags, type Role } from "./permissions.ts";
 
 export type TransferPlanOptions = {
   source: Instance;
   target: Instance;
   operation: "copy" | "move";
   kind?: "all" | "photos" | "videos";
-  /** A date-taken window; omitting it includes all eligible dates. */
-  range?: { from?: string; to: string };
+  /** Date-taken window; either end may be left out. Plain dates (2024-01-31) are read as UTC days, `to` inclusive. */
+  range?: { from?: string; to?: string };
+  /**
+   * Also consider assets that are in the SOURCE's trash (default false). Only for copy: a move would trash an asset
+   * that is already trashed. This never affects the target: an asset found only in the target's trash is still reported and skipped.
+   */
+  includeTrashed?: boolean;
+  /**
+   * Plan for a standalone metadata sync (sync_metadata), which classifies assets but never uploads or
+   * downloads. The instance checks then require only metadataSyncPermissions (source read; target read
+   * and asset.update; album/tag permissions only for the enabled options) instead of the copy roles.
+   */
+  metadataSync?: MetadataSyncFlags;
 };
 
 export type PlannedComponentStatus = "already-present" | "would-transfer" | "in-target-trash" | "failed";
@@ -85,7 +96,8 @@ const PREVIEW_WARNING =
   "Metadata changes are not compared by this transfer-only preview. No files are uploaded or trashed.";
 
 function safeRequestError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   if (error instanceof AssetSearchError) return error.message;
   return "request failed";
 }
@@ -101,17 +113,35 @@ function validateOptions(options: TransferPlanOptions): void {
   if (options.kind && !["all", "photos", "videos"].includes(options.kind)) {
     throw new TransferPlanError("Kind must be all, photos or videos.");
   }
-  if (options.range) {
-    const { from, to } = options.range;
-    const toTime = Date.parse(to);
-    const fromTime = from === undefined ? null : Date.parse(from);
-    if (!Number.isFinite(toTime) || (fromTime !== null && !Number.isFinite(fromTime))) {
-      throw new TransferPlanError("Date range must contain valid ISO date values.");
-    }
-    if (fromTime !== null && fromTime > toTime) {
-      throw new TransferPlanError("Date range start must not be after its end.");
-    }
+  normalizeRange(options.range);
+  if (options.includeTrashed && options.operation === "move") {
+    throw new TransferPlanError("Including source trash is not supported for a move: it would trash assets that are already trashed.");
   }
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Immich only accepts full ISO 8601 datetimes with a time zone in search filters, so plain dates are expanded:
+ * a start date is the beginning of that UTC day and an end date the end of that UTC day (inclusive).
+ */
+export function normalizeRange(range: TransferPlanOptions["range"]): { from?: string; to?: string } | undefined {
+  if (!range) return undefined;
+  const boundary = (value: string | undefined, edge: "start" | "end"): string | undefined => {
+    if (value === undefined) return undefined;
+    const text = value.trim();
+    const time = Date.parse(DATE_ONLY.test(text) ? `${text}T00:00:00.000Z` : text);
+    if (!Number.isFinite(time)) throw new TransferPlanError("Date range must contain valid ISO date values.");
+    if (DATE_ONLY.test(text)) return edge === "start" ? `${text}T00:00:00.000Z` : `${text}T23:59:59.999Z`;
+    return new Date(time).toISOString();
+  };
+  const from = boundary(range.from, "start");
+  const to = boundary(range.to, "end");
+  if (from === undefined && to === undefined) throw new TransferPlanError("Date range needs a start date, an end date, or both.");
+  if (from !== undefined && to !== undefined && Date.parse(from) > Date.parse(to)) {
+    throw new TransferPlanError("Date range start must not be after its end.");
+  }
+  return { ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) };
 }
 
 function normalizedApiUrl(apiUrl: string): string {
@@ -121,9 +151,9 @@ function normalizedApiUrl(apiUrl: string): string {
 }
 
 
-function isEligibleSourceAsset(asset: AssetResponseDto, ownerId: string): boolean {
+function isEligibleSourceAsset(asset: AssetResponseDto, ownerId: string, includeTrashed: boolean): boolean {
   return asset.ownerId === ownerId &&
-    !asset.isTrashed &&
+    (includeTrashed || !asset.isTrashed) &&
     (asset.visibility === AssetVisibility.Timeline || asset.visibility === AssetVisibility.Archive);
 }
 
@@ -171,7 +201,7 @@ function searchFilter(
     visibility: { eq: visibility },
     type: { eq: type },
     ...(range
-      ? { takenAt: { ...(range.from ? { gte: range.from } : {}), lte: range.to } }
+      ? { takenAt: { ...(range.from ? { gte: range.from } : {}), ...(range.to ? { lte: range.to } : {}) } }
       : {}),
   };
 }
@@ -180,6 +210,7 @@ async function discoverSourceAssets(
   instance: Instance,
   kind: NonNullable<TransferPlanOptions["kind"]>,
   range: TransferPlanOptions["range"],
+  includeTrashed: boolean,
 ): Promise<AssetResponseDto[]> {
   const types = kind === "photos"
     ? [AssetTypeEnum.Image]
@@ -189,7 +220,7 @@ async function discoverSourceAssets(
   const found = new Map<string, AssetResponseDto>();
   for (const visibility of [AssetVisibility.Timeline, AssetVisibility.Archive]) {
     for (const type of types) {
-      const assets = await collectAssets(instance, searchFilter(visibility, type, range), false);
+      const assets = await collectAssets(instance, searchFilter(visibility, type, range), includeTrashed);
       for (const asset of assets) found.set(asset.id, asset);
     }
   }
@@ -211,18 +242,39 @@ function validatePreflight(
   }
 }
 
+function validatePermissions(
+  label: string,
+  check: Awaited<ReturnType<typeof checkInstance>>,
+  required: string[],
+): void {
+  if (!check.ok) {
+    throw new TransferPlanError(`${label} instance check failed during ${check.error?.stage ?? "unknown"}.`);
+  }
+  const result = checkPermissions(check.permissions ?? [], required);
+  if (!result.ok) {
+    throw new TransferPlanError(`${label} instance cannot act for metadata sync; missing ${result.missing.join(", ")}.`);
+  }
+}
+
 async function getLivePhotoVideo(
   instance: Instance,
   sourceAssets: Map<string, AssetResponseDto>,
   ownerId: string,
   id: string,
+  includeTrashed: boolean,
 ): Promise<AssetResponseDto> {
   const asset = sourceAssets.get(id) ?? await getAssetInfo({ id }, requestOpts(instance));
   if (asset.id !== id || asset.type !== AssetTypeEnum.Video) {
     throw new TransferPlanError("Live Photo companion is not a video asset.");
   }
-  if (!isEligibleSourceAsset(asset, ownerId)) {
-    throw new TransferPlanError("Live Photo companion is not an eligible source asset.");
+  // Immich stores the video half of a Live Photo as a hidden asset, so hidden is allowed here (locked is not).
+  const eligible = asset.ownerId === ownerId &&
+    (includeTrashed || !asset.isTrashed) &&
+    (asset.visibility === AssetVisibility.Timeline || asset.visibility === AssetVisibility.Archive || asset.visibility === AssetVisibility.Hidden);
+  if (!eligible) {
+    throw new TransferPlanError(
+      `Live Photo companion is not an eligible source asset (${asset.ownerId !== ownerId ? "owned by someone else" : asset.isTrashed && !includeTrashed ? "in the source trash" : `visibility ${asset.visibility}`}).`,
+    );
   }
   if (!asset.checksum) throw new TransferPlanError("Live Photo companion has no checksum.");
   return asset;
@@ -257,8 +309,9 @@ async function buildGroups(
   sourceAssets: AssetResponseDto[],
   ownerId: string,
   kind: NonNullable<TransferPlanOptions["kind"]>,
+  includeTrashed: boolean,
 ): Promise<Array<{ primary: AssetResponseDto; components: Array<AssetResponseDto | { id: string; error: string }> }>> {
-  const eligible = sourceAssets.filter((asset) => isEligibleSourceAsset(asset, ownerId));
+  const eligible = sourceAssets.filter((asset) => isEligibleSourceAsset(asset, ownerId, includeTrashed));
   const byId = new Map(eligible.map((asset) => [asset.id, asset]));
   const companionIds = new Set<string>();
   if (kind !== "videos") {
@@ -278,9 +331,10 @@ async function buildGroups(
     const components: Array<AssetResponseDto | { id: string; error: string }> = [asset];
     if (kind !== "videos" && asset.type === AssetTypeEnum.Image && asset.livePhotoVideoId) {
       try {
-        components.push(await getLivePhotoVideo(source, byId, ownerId, asset.livePhotoVideoId));
-      } catch {
-        components.push({ id: asset.livePhotoVideoId, error: "Live Photo companion could not be verified." });
+        components.push(await getLivePhotoVideo(source, byId, ownerId, asset.livePhotoVideoId, includeTrashed));
+      } catch (error) {
+        const reason = error instanceof TransferPlanError ? error.message : (describeHttpError(error) ?? "request failed");
+        components.push({ id: asset.livePhotoVideoId, error: `Live Photo companion could not be verified: ${reason}` });
       }
     }
     groups.push({ primary: asset, components });
@@ -295,8 +349,13 @@ export async function planTransfer(options: TransferPlanOptions): Promise<Transf
     checkInstance(options.source),
     checkInstance(options.target),
   ]);
-  validatePreflight("Source", sourceCheck, options.operation === "move" ? "source-move" : "source-copy");
-  validatePreflight("Target", targetCheck, "target-copy");
+  if (options.metadataSync) {
+    validatePermissions("Source", sourceCheck, metadataSyncPermissions("source", options.metadataSync));
+    validatePermissions("Target", targetCheck, metadataSyncPermissions("target", options.metadataSync));
+  } else {
+    validatePreflight("Source", sourceCheck, options.operation === "move" ? "source-move" : "source-copy");
+    validatePreflight("Target", targetCheck, "target-copy");
+  }
 
   if (
     normalizedApiUrl(options.source.apiUrl) === normalizedApiUrl(options.target.apiUrl) &&
@@ -307,14 +366,14 @@ export async function planTransfer(options: TransferPlanOptions): Promise<Transf
 
   let sourceAssets: AssetResponseDto[];
   try {
-    sourceAssets = await discoverSourceAssets(options.source, kind, options.range);
+    sourceAssets = await discoverSourceAssets(options.source, kind, normalizeRange(options.range), options.includeTrashed === true);
   } catch (error) {
     if (error instanceof TransferPlanError) throw error;
     if (error instanceof AssetSearchError) throw new TransferPlanError(error.message);
     throw new TransferPlanError(`Source asset discovery failed for ${options.source.alias} (${safeRequestError(error)}).`);
   }
 
-  const groups = await buildGroups(options.source, sourceAssets, sourceCheck.user!.id, kind);
+  const groups = await buildGroups(options.source, sourceAssets, sourceCheck.user!.id, kind, options.includeTrashed === true);
   const plannedAssets: PlannedAsset[] = [];
   const events: TransferPlanEvent[] = [];
   const warnings = [PREVIEW_WARNING];

@@ -1,7 +1,19 @@
+# Keep the build context small and free of secrets or local state.
 **/node_modules
 **/dist
 **/.idea
+**/.vscode
+**/.DS_Store
 .git
+.github
 .env
+.env.*
+!.env.example
 postgres
 *.log
+*.tsbuildinfo
+SPEC.md
+AGENTS.md
+docker-compose*.yml
+Dockerfile
+.dockerignore

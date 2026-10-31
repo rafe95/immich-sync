@@ -53,6 +53,7 @@ function options(
     target: { alias: "target", apiUrl: target.url, apiKey: target.apiKey },
     assetIds,
     includeAlbums: true,
+    createMissingAlbums: true,
     ...overrides,
   };
 }
@@ -269,6 +270,7 @@ describe("syncMetadataFields album membership", () => {
     const target = fake({ permissions: ["user.read", "asset.read", "asset.update"], assets: [targetAsset] });
     const settings = options(source, target, [sourceAsset.id]);
     delete (settings as { includeAlbums?: boolean }).includeAlbums;
+    delete (settings as { createMissingAlbums?: boolean }).createMissingAlbums;
 
     const result = await syncMetadataFields(settings);
 
@@ -348,5 +350,49 @@ describe("syncMetadataFields album membership", () => {
     expect(result.assets[0]).toMatchObject({ status: "cancelled", changedAlbums: [] });
     expect(albumRequests(target, "POST", "/api/albums")).toHaveLength(1);
     expect(albumRequests(target, "PUT", "/api/albums/assets")).toHaveLength(0);
+  });
+
+  test("does not create missing albums unless createMissingAlbums is set, and does not require album.create", async () => {
+    const sourceAsset = asset("source-nocreate");
+    const targetAsset = asset("target-nocreate");
+    const source = fake({
+      assets: [sourceAsset],
+      albums: [album("sa", "Exists", [sourceAsset.id]), album("sb", "Missing", [sourceAsset.id])],
+    });
+    const existing = album("te", "Exists");
+    const target = fake({
+      permissions: ["user.read", "asset.read", "asset.update", "album.read", "albumAsset.create"],
+      assets: [targetAsset],
+      albums: [existing],
+    });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id], { createMissingAlbums: false }));
+
+    expect(result.assets[0]).toMatchObject({ status: "updated", changedAlbums: ["Exists"] });
+    expect(result.assets[0]?.message).toContain("Missing");
+    expect(albumRequests(target, "POST", "/api/albums")).toHaveLength(0);
+    expect(existing.assetIds).toEqual([targetAsset.id]);
+  });
+
+  test("createMissingAlbums requires includeAlbums and boolean values", async () => {
+    const source = fake({ assets: [asset("s")] });
+    const target = fake({ assets: [asset("t")] });
+    await expect(syncMetadataFields(options(source, target, ["s"], { includeAlbums: false })))
+      .rejects.toThrow("createMissingAlbums requires includeAlbums");
+    await expect(syncMetadataFields(options(source, target, ["s"], { createMissingAlbums: "yes" })))
+      .rejects.toThrow("createMissingAlbums must be a boolean");
+  });
+
+  test("dry run with createMissingAlbums reports the creation but changes nothing", async () => {
+    const sourceAsset = asset("source-dry-create");
+    const targetAsset = asset("target-dry-create");
+    const source = fake({ assets: [sourceAsset], albums: [album("sa", "New", [sourceAsset.id])] });
+    const target = fake({ assets: [targetAsset] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id], { dryRun: true }));
+
+    expect(result.assets[0]).toMatchObject({ status: "would-update", changedAlbums: ["New"] });
+    expect(target.requests.some((request) => request.method !== "GET" && request.method !== "POST" ||
+      (request.method === "POST" && request.path === "/api/albums"))).toBe(false);
   });
 });

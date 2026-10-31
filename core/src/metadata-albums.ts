@@ -1,8 +1,8 @@
+import { describeHttpError } from "./http-error.ts";
 import {
   addAssetsToAlbums,
   createAlbum,
   getAllAlbums,
-  isHttpError,
   type AlbumResponseDto,
 } from "@immich/sdk";
 import { requestOpts, type Instance } from "./instance.ts";
@@ -12,7 +12,10 @@ export type AlbumMembershipAddition = {
   albumId?: string;
 };
 
-export type AlbumMembershipPlan = AlbumMembershipAddition[];
+export type AlbumMembershipPlan = AlbumMembershipAddition[] & {
+  /** Source album names with no exact-name owned target album while creation is disabled. */
+  skippedMissing?: string[];
+};
 
 export type AlbumMembershipApplyResult = {
   added: string[];
@@ -75,6 +78,7 @@ export async function planAlbumMembershipAdditions(
   targetAssetId: string,
   sourceOwnerId: string,
   targetOwnerId: string,
+  createMissing: boolean,
   signal?: AbortSignal,
 ): Promise<AlbumMembershipPlan> {
   const sourceMemberships = ownedBy(
@@ -92,6 +96,7 @@ export async function planAlbumMembershipAdditions(
   const memberships = new Set(targetMemberships.map((album) => album.id));
 
   const additions: AlbumMembershipPlan = [];
+  const skippedMissing: string[] = [];
   for (const albumName of albumNames) {
     const matches = targetAlbums.filter((album) => album.albumName === albumName);
     if (matches.length > 1) {
@@ -99,13 +104,19 @@ export async function planAlbumMembershipAdditions(
     }
     const match = matches[0];
     if (match && memberships.has(match.id)) continue;
+    if (!match && !createMissing) {
+      skippedMissing.push(albumName);
+      continue;
+    }
     additions.push({ albumName, ...(match ? { albumId: match.id } : {}) });
   }
+  if (skippedMissing.length > 0) additions.skippedMissing = skippedMissing;
   return additions;
 }
 
 function safeAlbumError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return error instanceof Error ? error.message : "Album request failed.";
 }
 

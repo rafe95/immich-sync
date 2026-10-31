@@ -1,8 +1,8 @@
+import { describeHttpError } from "./http-error.ts";
 import {
   AssetTypeEnum,
   AssetVisibility,
   getAssetInfo,
-  isHttpError,
   type AssetResponseDto,
 } from "@immich/sdk";
 import { findAssetsByChecksum } from "./asset-search.ts";
@@ -17,6 +17,28 @@ export type CopyOptions = Omit<TransferPlanOptions, "operation"> & {
   metadataSync: false;
   dryRun?: boolean;
   signal?: AbortSignal;
+  /**
+   * Called synchronously as each asset finishes (copied, already-present, in-target-trash, failed or
+   * cancelled), in plan order, before copyAssets resolves. Never called for dry runs. Contains no
+   * credentials. Errors thrown by it are ignored.
+   */
+  onAsset?: (asset: CopyAssetResult) => void;
+  /** Called after each asset finishes (same moment as onAsset) with running totals. Errors are ignored. */
+  onProgress?: (progress: TransferProgress) => void;
+};
+
+/**
+ * Progress of a transfer for a progress bar. Bytes count original files of copied components; the
+ * total covers only components whose size the source reported (unknownSizeComponents counts the rest)
+ * and only components that were planned to be transferred.
+ */
+export type TransferProgress = {
+  phase: "copying" | "finalizing";
+  assetsDone: number;
+  assetsTotal: number;
+  bytesDone: number;
+  bytesTotal: number;
+  unknownSizeComponents: number;
 };
 
 export type CopyComponentStatus = "copied" | "already-present" | "in-target-trash" | "failed" | "cancelled";
@@ -71,7 +93,8 @@ export type CopyResult = {
 type TargetState = { active: AssetResponseDto | null; trashed: boolean };
 
 function safeError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return "request failed";
 }
 
@@ -302,6 +325,7 @@ export async function copyAssets(options: CopyOptions): Promise<TransferPlan | C
     operation: "copy",
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.range ? { range: options.range } : {}),
+    ...(options.includeTrashed ? { includeTrashed: true } : {}),
   };
   const plan = await planTransfer(planOptions);
   if (options.dryRun) return plan;
@@ -318,19 +342,50 @@ export async function copyAssets(options: CopyOptions): Promise<TransferPlan | C
     "Source assets are never trashed by copy.",
   ];
   const assets: CopyAssetResult[] = [];
+  const toTransfer = plan.assets
+    .filter((asset) => asset.status === "would-transfer")
+    .flatMap((asset) => asset.components)
+    .filter((component) => component.status === "would-transfer");
+  const bytesTotal = toTransfer.reduce((total, component) => total + (component.sizeBytes ?? 0), 0);
+  const unknownSizeComponents = toTransfer.filter((component) => component.sizeBytes === null).length;
+  const sizes = new Map(plan.assets.flatMap((asset) => asset.components.map((c) => [c.id, c.sizeBytes ?? 0] as const)));
+  let bytesDone = 0;
+  const record = (result: CopyAssetResult) => {
+    assets.push(result);
+    for (const component of result.components) {
+      if (component.status === "copied") bytesDone += sizes.get(component.id) ?? 0;
+    }
+    try {
+      options.onAsset?.(result);
+    } catch {
+      // A failing listener must not affect the run.
+    }
+    try {
+      options.onProgress?.({
+        phase: "copying",
+        assetsDone: assets.length,
+        assetsTotal: plan.assets.length,
+        bytesDone,
+        bytesTotal,
+        unknownSizeComponents,
+      });
+    } catch {
+      // A failing listener must not affect the run.
+    }
+  };
   for (const planned of plan.assets) {
     if (options.signal?.aborted) {
-      assets.push(groupResult(
+      record(groupResult(
         planned,
         planned.components.map((component) => componentResult(component, "cancelled", { message: "Copy cancelled before this asset started." })),
       ));
       continue;
     }
     try {
-      assets.push(await copyAssetGroup(options.source, options.target, planned, sourceCheck.user.id, options.signal));
+      record(await copyAssetGroup(options.source, options.target, planned, sourceCheck.user.id, options.signal));
     } catch (error) {
       if (!options.signal?.aborted) throw error;
-      assets.push(groupResult(
+      record(groupResult(
         planned,
         planned.components.map((component) => componentResult(component, "cancelled", { message: "Copy cancelled before this asset completed." })),
       ));

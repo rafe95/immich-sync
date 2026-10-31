@@ -1,7 +1,7 @@
+import { describeHttpError } from "./http-error.ts";
 import {
   AssetVisibility,
   getAssetInfo,
-  isHttpError,
   updateAsset,
   type AssetResponseDto,
   type UpdateAssetDto,
@@ -9,9 +9,19 @@ import {
 import { findAssetsByChecksum } from "./asset-search.ts";
 import { checkInstance } from "./check.ts";
 import { requestOpts, validateInstanceInput, type Instance } from "./instance.ts";
+import { checkPermissions, metadataSyncPermissions } from "./permissions.ts";
 import { applyAlbumMembershipAdditions, planAlbumMembershipAdditions } from "./metadata-albums.ts";
+import { applyTagAdditions, planTagAdditions, tagValues } from "./metadata-tags.ts";
 
-export type MetadataField = "isFavorite" | "visibility" | "description" | "rating" | "location" | "albums";
+export type MetadataField =
+  | "isFavorite"
+  | "visibility"
+  | "description"
+  | "rating"
+  | "location"
+  | "dateTimeOriginal"
+  | "albums"
+  | "tags";
 
 export type MetadataFieldsOptions = {
   source: Instance;
@@ -20,7 +30,16 @@ export type MetadataFieldsOptions = {
   assetIds: string[];
   dryRun?: boolean;
   includeAlbums?: boolean;
+  /** With includeAlbums, also create missing owned target albums by exact name. Off by default. */
+  createMissingAlbums?: boolean;
+  /** Add source tags (matched by exact value, created on the target if missing) to the target asset. */
+  includeTags?: boolean;
   signal?: AbortSignal;
+  /**
+   * Called synchronously as each asset finishes (in assetIds order, before the run resolves). Contains
+   * no credentials. Errors thrown by it are ignored.
+   */
+  onAsset?: (asset: MetadataFieldAssetResult) => void;
 };
 
 export type MetadataFieldAssetStatus =
@@ -37,6 +56,7 @@ export type MetadataFieldAssetResult = {
   status: MetadataFieldAssetStatus;
   changedFields: MetadataField[];
   changedAlbums: string[];
+  changedTags: string[];
   targetId?: string;
   message?: string;
 };
@@ -60,6 +80,7 @@ export type MetadataFieldsEvent =
     status: MetadataFieldAssetStatus;
     changedFields: MetadataField[];
     changedAlbums: string[];
+    changedTags: string[];
     message?: string;
   }
   | { type: "summary"; summary: MetadataFieldsSummary };
@@ -84,14 +105,17 @@ export class MetadataFieldsError extends Error {
 }
 
 const SCOPE_WARNING =
-  "This operation syncs selected asset fields only: favorite, timeline/archive visibility, nonempty description, rating, and complete GPS pairs.";
+  "This operation syncs selected asset fields only: favorite, timeline/archive visibility, nonempty description, rating, and complete GPS pairs, date taken with time zone offset, and (when enabled) tags.";
 const ALBUM_SCOPE_WARNING =
   "With includeAlbums enabled, owned source album memberships are added to exact-name target albums; target-only memberships and album settings are preserved.";
-const SOURCE_PERMISSIONS = ["user.read", "asset.read"];
-const TARGET_PERMISSIONS = ["user.read", "asset.read", "asset.update"];
+const ALBUM_CREATE_WARNING =
+  "With createMissingAlbums enabled, missing owned target albums are created (private, name only) before the asset is added.";
+const TAG_SCOPE_WARNING =
+  "With includeTags enabled, source tags are added to the target asset by exact value, creating missing target tags; target-only tags are preserved.";
 
 function safeError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return error instanceof Error ? error.message : "request failed";
 }
 
@@ -119,6 +143,14 @@ function validateOptions(options: MetadataFieldsOptions): void {
   if (options.includeAlbums !== undefined && typeof options.includeAlbums !== "boolean") {
     throw new MetadataFieldsError("includeAlbums must be a boolean.");
   }
+  for (const name of ["createMissingAlbums", "includeTags"] as const) {
+    if (options[name] !== undefined && typeof options[name] !== "boolean") {
+      throw new MetadataFieldsError(`${name} must be a boolean.`);
+    }
+  }
+  if (options.createMissingAlbums === true && options.includeAlbums !== true) {
+    throw new MetadataFieldsError("createMissingAlbums requires includeAlbums.");
+  }
 }
 
 function normalizedApiUrl(apiUrl: string): string {
@@ -127,19 +159,23 @@ function normalizedApiUrl(apiUrl: string): string {
   return `${url.origin}${url.pathname}`;
 }
 
-async function preflight(instance: Instance, label: "source" | "target", includeAlbums: boolean) {
+async function preflight(
+  instance: Instance,
+  label: "source" | "target",
+  includeAlbums: boolean,
+  createMissingAlbums: boolean,
+  includeTags: boolean,
+) {
   const result = await checkInstance(instance);
   const user = result.user;
   const version = result.version;
   if (!result.ok || !user || !version) {
     throw new MetadataFieldsError(`${label} instance preflight failed${result.error ? ` at ${result.error.stage}` : ""}.`);
   }
-  const required = [...(label === "source" ? SOURCE_PERMISSIONS : TARGET_PERMISSIONS)];
-  if (includeAlbums) {
-    required.push("album.read");
-    if (label === "target") required.push("album.create", "albumAsset.create");
-  }
-  const missing = result.permissions.includes("all") ? [] : required.filter((permission) => !result.permissions.includes(permission));
+  const { missing } = checkPermissions(
+    result.permissions,
+    metadataSyncPermissions(label, { includeAlbums, createMissingAlbums, includeTags }),
+  );
   if (missing.length > 0) {
     throw new MetadataFieldsError(`${label} metadata fields requires permissions: ${missing.join(", ")}.`);
   }
@@ -164,10 +200,47 @@ function validateAssetResponse(asset: AssetResponseDto, id: string, label: strin
   }
 }
 
+/**
+ * Offset in minutes east of UTC for a time zone at an instant. Accepts Immich's fixed
+ * "UTC+H[:MM]" form and IANA names; returns undefined when it cannot be determined reliably.
+ */
+export function timeZoneOffsetMinutes(timeZone: unknown, instantMs: number): number | undefined {
+  if (typeof timeZone !== "string" || timeZone.length === 0) return undefined;
+  const fixed = /^UTC(?:([+-])(\d{1,2})(?::?(\d{2}))?)?$/.exec(timeZone);
+  if (fixed) {
+    if (!fixed[1]) return 0;
+    const minutes = Number(fixed[2]) * 60 + Number(fixed[3] ?? 0);
+    return fixed[1] === "-" ? -minutes : minutes;
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" })
+      .formatToParts(new Date(instantMs));
+    const name = parts.find((part) => part.type === "timeZoneName")?.value;
+    if (name === "GMT") return 0;
+    const match = name ? /^GMT([+-])(\d{2}):(\d{2})$/.exec(name) : null;
+    if (!match) return undefined;
+    const minutes = Number(match[2]) * 60 + Number(match[3]);
+    return match[1] === "-" ? -minutes : minutes;
+  } catch {
+    return undefined;
+  }
+}
+
+function localIsoWithOffset(instantMs: number, offsetMinutes: number): string {
+  const local = new Date(instantMs + offsetMinutes * 60_000).toISOString().slice(0, 23);
+  const abs = Math.abs(offsetMinutes);
+  const sign = offsetMinutes < 0 ? "-" : "+";
+  return `${local}${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+}
+
+type DateExpectation = { instantMs: number; offsetMinutes: number };
+
 function metadataUpdate(source: AssetResponseDto, target: AssetResponseDto): {
   update: UpdateAssetDto;
   fields: MetadataField[];
+  date?: DateExpectation;
 } {
+  let date: DateExpectation | undefined;
   const update: UpdateAssetDto = {};
   const fields: MetadataField[] = [];
 
@@ -206,11 +279,32 @@ function metadataUpdate(source: AssetResponseDto, target: AssetResponseDto): {
     fields.push("location");
   }
 
-  return { update, fields };
+  // Immich's update DTO has no time zone field; the zone is derived by the server from the offset
+  // carried in dateTimeOriginal. Only sync when the source zone is known and resolvable, and verify it.
+  const sourceTaken = source.exifInfo?.dateTimeOriginal;
+  const sourceMs = typeof sourceTaken === "string" ? Date.parse(sourceTaken) : Number.NaN;
+  if (Number.isFinite(sourceMs)) {
+    const offset = timeZoneOffsetMinutes(source.exifInfo?.timeZone, sourceMs);
+    if (offset !== undefined) {
+      const targetTaken = target.exifInfo?.dateTimeOriginal;
+      const targetMs = typeof targetTaken === "string" ? Date.parse(targetTaken) : Number.NaN;
+      if (targetMs !== sourceMs || timeZoneOffsetMinutes(target.exifInfo?.timeZone, sourceMs) !== offset) {
+        update.dateTimeOriginal = localIsoWithOffset(sourceMs, offset);
+        date = { instantMs: sourceMs, offsetMinutes: offset };
+        fields.push("dateTimeOriginal");
+      }
+    }
+  }
+
+  return { update, fields, ...(date ? { date } : {}) };
 }
 
-function updateMatches(asset: AssetResponseDto, update: UpdateAssetDto): boolean {
-  return (update.isFavorite === undefined || asset.isFavorite === update.isFavorite) &&
+function updateMatches(asset: AssetResponseDto, update: UpdateAssetDto, date?: DateExpectation): boolean {
+  const dateOk = !date || (
+    Date.parse(asset.exifInfo?.dateTimeOriginal ?? "") === date.instantMs &&
+    timeZoneOffsetMinutes(asset.exifInfo?.timeZone, date.instantMs) === date.offsetMinutes
+  );
+  return dateOk && (update.isFavorite === undefined || asset.isFavorite === update.isFavorite) &&
     (update.visibility === undefined || asset.visibility === update.visibility) &&
     (update.description === undefined || asset.exifInfo?.description === update.description) &&
     (update.rating === undefined || asset.exifInfo?.rating === update.rating) &&
@@ -235,9 +329,9 @@ function resultFor(
   fileName: string,
   status: MetadataFieldAssetStatus,
   changedFields: MetadataField[],
-  details: { targetId?: string; message?: string; changedAlbums?: string[] } = {},
+  details: { targetId?: string; message?: string; changedAlbums?: string[]; changedTags?: string[] } = {},
 ): MetadataFieldAssetResult {
-  return { id, fileName, status, changedFields, changedAlbums: [], ...details };
+  return { id, fileName, status, changedFields, changedAlbums: [], changedTags: [], ...details };
 }
 
 async function syncOneAsset(
@@ -251,6 +345,7 @@ async function syncOneAsset(
   let targetId: string | undefined;
   let changedFields: MetadataField[] = [];
   let changedAlbums: string[] = [];
+  let changedTags: string[] = [];
   try {
     signal?.throwIfAborted();
     const source = await getAssetInfo({ id }, { ...requestOpts(options.source), signal });
@@ -275,7 +370,7 @@ async function syncOneAsset(
     }
     targetId = target.id;
 
-    const { update, fields: scalarFields } = metadataUpdate(source, target);
+    const { update, fields: scalarFields, date } = metadataUpdate(source, target);
     const albumPlan = options.includeAlbums
       ? await planAlbumMembershipAdditions(
         options.source,
@@ -284,19 +379,34 @@ async function syncOneAsset(
         target.id,
         sourceOwnerId,
         targetOwnerId,
+        options.createMissingAlbums === true,
         signal,
       )
       : [];
+    const tagPlan = options.includeTags
+      ? await planTagAdditions(options.target, source.tags, target.tags, signal)
+      : undefined;
     signal?.throwIfAborted();
 
     const plannedAlbums = albumPlan.map((addition) => addition.albumName);
+    const plannedTags = tagPlan?.values ?? [];
+    const skippedAlbums = albumPlan.skippedMissing ?? [];
+    const skippedNote = skippedAlbums.length > 0
+      ? `Albums missing on target were not created (createMissingAlbums is off): ${skippedAlbums.map((name) => JSON.stringify(name)).join(", ")}.`
+      : undefined;
     const plannedFields: MetadataField[] = [...scalarFields];
     if (plannedAlbums.length > 0) plannedFields.push("albums");
+    if (plannedTags.length > 0) plannedFields.push("tags");
     if (plannedFields.length === 0) {
-      return resultFor(id, fileName, "already-synced", [], { targetId });
+      return resultFor(id, fileName, "already-synced", [], { targetId, ...(skippedNote ? { message: skippedNote } : {}) });
     }
     if (options.dryRun) {
-      return resultFor(id, fileName, "would-update", plannedFields, { targetId, changedAlbums: plannedAlbums });
+      return resultFor(id, fileName, "would-update", plannedFields, {
+        targetId,
+        changedAlbums: plannedAlbums,
+        changedTags: plannedTags,
+        ...(skippedNote ? { message: skippedNote } : {}),
+      });
     }
 
     if (scalarFields.length > 0) {
@@ -305,7 +415,7 @@ async function syncOneAsset(
       signal?.throwIfAborted();
       const verified = await getAssetInfo({ id: target.id }, { ...requestOpts(options.target), signal });
       validateAssetResponse(verified, target.id, "updated target");
-      if (verified.ownerId !== targetOwnerId || verified.checksum !== source.checksum || !updateMatches(verified, update)) {
+      if (verified.ownerId !== targetOwnerId || verified.checksum !== source.checksum || !updateMatches(verified, update, date)) {
         throw new Error("Updated target metadata did not match the requested values after verification.");
       }
       changedFields = scalarFields;
@@ -337,12 +447,49 @@ async function syncOneAsset(
       }
     }
 
-    return resultFor(id, fileName, "updated", changedFields, { targetId, changedAlbums });
+    if (tagPlan && tagPlan.values.length > 0) {
+      const applied = await applyTagAdditions(options.target, target.id, tagPlan, signal);
+      if (applied.cancelled) {
+        return resultFor(id, fileName, "cancelled", changedFields, {
+          targetId,
+          changedAlbums,
+          message: "Operation cancelled; verified changes were retained.",
+        });
+      }
+      if (applied.errors.length === 0) {
+        signal?.throwIfAborted();
+        const verified = await getAssetInfo({ id: target.id }, { ...requestOpts(options.target), signal });
+        validateAssetResponse(verified, target.id, "tagged target");
+        const present = new Set(tagValues(verified.tags));
+        if (verified.ownerId !== targetOwnerId || !applied.added.every((value) => present.has(value))) {
+          applied.errors.push("Target tags could not be verified after assignment.");
+        } else {
+          changedTags = applied.added;
+          changedFields = [...changedFields, "tags"];
+        }
+      }
+      if (applied.errors.length > 0) {
+        return resultFor(id, fileName, "failed", changedFields, {
+          targetId,
+          changedAlbums,
+          changedTags,
+          message: applied.errors.join("; "),
+        });
+      }
+    }
+
+    return resultFor(id, fileName, "updated", changedFields, {
+      targetId,
+      changedAlbums,
+      changedTags,
+      ...(skippedNote ? { message: skippedNote } : {}),
+    });
   } catch (error) {
     const cancelled = signal?.aborted === true;
     return resultFor(id, fileName, cancelled ? "cancelled" : "failed", changedFields, {
       ...(targetId ? { targetId } : {}),
       changedAlbums,
+      changedTags,
       message: cancelled ? "Operation cancelled; verified changes were retained." : safeError(error),
     });
   }
@@ -351,8 +498,8 @@ async function syncOneAsset(
 export async function syncMetadataFields(options: MetadataFieldsOptions): Promise<MetadataFieldsResult> {
   validateOptions(options);
   const [sourceCheck, targetCheck] = await Promise.all([
-    preflight(options.source, "source", options.includeAlbums === true),
-    preflight(options.target, "target", options.includeAlbums === true),
+    preflight(options.source, "source", options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true),
+    preflight(options.target, "target", options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true),
   ]);
   if (
     normalizedApiUrl(options.source.apiUrl) === normalizedApiUrl(options.target.apiUrl) &&
@@ -362,15 +509,23 @@ export async function syncMetadataFields(options: MetadataFieldsOptions): Promis
   }
 
   const assets: MetadataFieldAssetResult[] = [];
+  const record = (asset: MetadataFieldAssetResult) => {
+    assets.push(asset);
+    try {
+      options.onAsset?.(asset);
+    } catch {
+      // A failing listener must not affect the run.
+    }
+  };
   for (const id of options.assetIds) {
     if (options.signal?.aborted) {
-      assets.push(resultFor(id, id, "cancelled", [], { message: "Operation cancelled before this asset was processed." }));
+      record(resultFor(id, id, "cancelled", [], { message: "Operation cancelled before this asset was processed." }));
       continue;
     }
     try {
-      assets.push(await syncOneAsset(options, id, sourceCheck.user.id, targetCheck.user.id));
+      record(await syncOneAsset(options, id, sourceCheck.user.id, targetCheck.user.id));
     } catch (error) {
-      assets.push(resultFor(
+      record(resultFor(
         id,
         id,
         options.signal?.aborted ? "cancelled" : "failed",
@@ -381,16 +536,22 @@ export async function syncMetadataFields(options: MetadataFieldsOptions): Promis
   }
 
   const summary = summarize(assets);
-  const warnings = [SCOPE_WARNING, ...(options.includeAlbums ? [ALBUM_SCOPE_WARNING] : [])];
+  const warnings = [
+    SCOPE_WARNING,
+    ...(options.includeAlbums ? [ALBUM_SCOPE_WARNING] : []),
+    ...(options.createMissingAlbums ? [ALBUM_CREATE_WARNING] : []),
+    ...(options.includeTags ? [TAG_SCOPE_WARNING] : []),
+  ];
   const events: MetadataFieldsEvent[] = [
     ...warnings.map((message) => ({ type: "warning" as const, message })),
-    ...assets.map(({ id, fileName, status, changedFields, changedAlbums, message }) => ({
+    ...assets.map(({ id, fileName, status, changedFields, changedAlbums, changedTags, message }) => ({
       type: "asset" as const,
       id,
       fileName,
       status,
       changedFields,
       changedAlbums,
+      changedTags,
       ...(message ? { message } : {}),
     })),
     { type: "summary", summary },
@@ -407,4 +568,32 @@ export async function syncMetadataFields(options: MetadataFieldsOptions): Promis
     summary,
     events,
   };
+}
+
+/**
+ * Validates both instances for a metadata sync (connection, version, permissions, same server/user)
+ * without touching any asset. Lets callers refuse a run before any upload or other change.
+ */
+export async function preflightMetadataFields(
+  options: Pick<MetadataFieldsOptions, "source" | "target" | "includeAlbums" | "createMissingAlbums" | "includeTags">,
+): Promise<{ sourceVersion: string; targetVersion: string }> {
+  for (const [label, instance] of [["source", options.source], ["target", options.target]] as const) {
+    const problems = validateInstanceInput(instance);
+    if (problems.length) throw new MetadataFieldsError(`${label} instance is invalid: ${problems.join(" ")}`);
+  }
+  if (options.createMissingAlbums === true && options.includeAlbums !== true) {
+    throw new MetadataFieldsError("createMissingAlbums requires includeAlbums.");
+  }
+  const flags = [options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true] as const;
+  const [sourceCheck, targetCheck] = await Promise.all([
+    preflight(options.source, "source", ...flags),
+    preflight(options.target, "target", ...flags),
+  ]);
+  if (
+    normalizedApiUrl(options.source.apiUrl) === normalizedApiUrl(options.target.apiUrl) &&
+    sourceCheck.user.id === targetCheck.user.id
+  ) {
+    throw new MetadataFieldsError("Source and target must be different servers or users.");
+  }
+  return { sourceVersion: sourceCheck.version, targetVersion: targetCheck.version };
 }

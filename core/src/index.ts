@@ -5,3 +5,5 @@ export * from "./check.ts";
 export * from "./plan.ts";
 export * from "./copy.ts";
 export * from "./metadata-fields.ts";
+export * from "./move.ts";
+export * from "./step.ts";

@@ -105,7 +105,12 @@ function multipartStream(
       }
     } finally {
       options.signal?.removeEventListener("abort", cancelReader);
-      reader.releaseLock();
+      try {
+        reader.releaseLock();
+      } catch {
+        // Cleanup only. Bun intermittently throws here when the connection already closed the stream;
+        // that must not turn a finished upload into a failure or mask the original error.
+      }
     }
     yield encoder.encode(`\r\n--${boundary}--\r\n`);
   })();

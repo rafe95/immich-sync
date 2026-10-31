@@ -55,7 +55,7 @@ describe("planTransfer", () => {
       ],
     });
     const target = fake({
-      version: { major: 3, minor: 2, patch: 4 },
+      version: { major: 3, minor: 3, patch: 0 },
       pageSize: 1,
       assets: [
         asset("target-present", { checksum: "checksum-present", ownerId: "target-user" }),
@@ -78,11 +78,13 @@ describe("planTransfer", () => {
     });
     expect(plan.events.some((event) => event.type === "summary")).toBe(true);
     expect(plan.warnings.join(" ")).toContain("Metadata changes are not compared");
-    expect(plan.warnings.join(" ")).toContain("source v3.3.3, target v3.2.4");
+    expect(plan.warnings.join(" ")).toContain("source v3.3.3, target v3.3.0");
     expect(source.requests.some((request) => request.body && (request.body as { cursor?: string }).cursor)).toBe(true);
-    expect(target.requests.some((request) =>
-      request.body && (request.body as { withDeleted?: boolean }).withDeleted === true,
-    )).toBe(true);
+    // Trash state is stated in the filter; Immich v3.3.5 rejects the deprecated withDeleted flag next to a filter.
+    type SearchBody = { withDeleted?: boolean; filter?: { trashedAt?: { eq?: null; ne?: null } } };
+    const searchBodies = [...source.requests, ...target.requests].map((request) => request.body as SearchBody | undefined);
+    expect(searchBodies.some((body) => body?.filter?.trashedAt?.ne === null)).toBe(true);
+    expect(searchBodies.every((body) => body?.withDeleted === undefined)).toBe(true);
     expect([...source.requests, ...target.requests].every((request) =>
       (request.method === "POST" && request.path === "/api/search/metadata") ||
       (request.method === "GET" && /^\/api\/assets\/[^/]+$/.test(request.path)),
@@ -132,6 +134,66 @@ describe("planTransfer", () => {
     })).toBe(true);
   });
 
+  test("a rejected source search reports the server's validation message", async () => {
+    const source = fake({ rejectSearchWith: "filter.takenAt must be a valid date" });
+    const target = fake();
+
+    await expect(planTransfer(options(source, target))).rejects.toThrow(
+      "Source asset discovery failed for source (HTTP 400: Validation failed [{\"path\":[\"filter\"],\"message\":\"filter.takenAt must be a valid date\"}]).",
+    );
+  });
+
+  test("plain dates are expanded to UTC day boundaries and either end may be left out", async () => {
+    const taken = (iso: string) => ({ exifInfo: { dateTimeOriginal: iso, fileSizeInByte: 1 } });
+    const source = fake({
+      assets: [
+        asset("before", taken("2026-04-30T23:59:59.000Z")),
+        asset("first-day", taken("2026-05-01T00:00:00.000Z")),
+        asset("last-day", taken("2026-05-31T23:59:59.000Z")),
+        asset("after", taken("2026-06-01T00:00:00.000Z")),
+      ],
+    });
+    const target = fake();
+    const ids = async (range: TransferPlanOptions["range"]) =>
+      (await planTransfer(options(source, target, { range }))).assets.map((item) => item.id).sort();
+
+    expect(await ids({ from: "2026-05-01", to: "2026-05-31" })).toEqual(["first-day", "last-day"]);
+    expect(await ids({ from: "2026-05-01" })).toEqual(["after", "first-day", "last-day"]);
+    expect(await ids({ to: "2026-05-01" })).toEqual(["before", "first-day"]);
+    expect(await ids({ from: "2026-05-01T00:00:00+00:00", to: "2026-05-31T23:59:59.999Z" })).toEqual(["first-day", "last-day"]);
+  });
+
+  test("an empty or reversed date range is refused", async () => {
+    const source = fake();
+    const target = fake();
+
+    await expect(planTransfer(options(source, target, { range: {} }))).rejects.toThrow("needs a start date, an end date, or both");
+    await expect(planTransfer(options(source, target, { range: { from: "2026-06-01", to: "2026-05-01" } }))).rejects.toThrow("must not be after");
+    await expect(planTransfer(options(source, target, { range: { from: "nope" } }))).rejects.toThrow("valid ISO date");
+  });
+
+  test("source trash is ignored by default and included only on request; target trash is still skipped", async () => {
+    const source = fake({ assets: [asset("active"), asset("trashed-source", { isTrashed: true }), asset("also-in-target-trash", { isTrashed: true })] });
+    const target = fake({ assets: [asset("t-also", { checksum: "checksum-also-in-target-trash", isTrashed: true })] });
+
+    const byDefault = await planTransfer(options(source, target));
+    expect(byDefault.assets.map((item) => item.id)).toEqual(["active"]);
+
+    const included = await planTransfer(options(source, target, { includeTrashed: true }));
+    const statuses = Object.fromEntries(included.assets.map((item) => [item.id, item.status]));
+    expect(statuses).toEqual({
+      active: "would-transfer",
+      "trashed-source": "would-transfer",
+      "also-in-target-trash": "in-target-trash",
+    });
+  });
+
+  test("including source trash is refused for a move", async () => {
+    await expect(planTransfer(options(fake(), fake(), { operation: "move", includeTrashed: true }))).rejects.toThrow(
+      "not supported for a move",
+    );
+  });
+
   test("a target lookup failure is isolated to its asset and the preview continues", async () => {
     const source = fake({ assets: [asset("failure"), asset("success")] });
     const target = fake({ searchErrorChecksums: ["checksum-failure"] });
@@ -162,6 +224,22 @@ describe("planTransfer", () => {
 
     expect(plan.assets[0]?.status).toBe("failed");
     expect(plan.summary).toMatchObject({ failed: 1, wouldTransfer: 0, bytesToTransfer: 0 });
+  });
+
+  test("a hidden Live Photo companion (as Immich stores it) is accepted; a locked one is refused with its reason", async () => {
+    const photo = asset("live-photo", { livePhotoVideoId: "hidden-video" });
+    const hiddenVideo = asset("hidden-video", { type: "VIDEO", visibility: "hidden", originalFileName: "live.mov" });
+    const lockedPhoto = asset("locked-live", { livePhotoVideoId: "locked-video" });
+    const lockedVideo = asset("locked-video", { type: "VIDEO", visibility: "locked", originalFileName: "locked.mov" });
+    const source = fake({ assets: [photo, hiddenVideo, lockedPhoto, lockedVideo] });
+
+    const plan = await planTransfer(options(source, fake(), { kind: "photos" }));
+
+    const byId = Object.fromEntries(plan.assets.map((item) => [item.id, item]));
+    expect(byId["live-photo"]?.status).toBe("would-transfer");
+    expect(byId["live-photo"]?.components.map((component) => component.id)).toEqual(["live-photo", "hidden-video"]);
+    expect(byId["locked-live"]?.status).toBe("failed");
+    expect(byId["locked-live"]?.components.map((component) => component.message).join(" ")).toContain("visibility locked");
   });
 
   test("refuses a same-server same-user transfer before searching assets", async () => {
@@ -203,5 +281,30 @@ describe("planTransfer", () => {
     await expect(planTransfer(request)).rejects.toThrow("API URL");
     expect(source.requests).toHaveLength(0);
     expect(target.requests).toHaveLength(0);
+  });
+});
+describe("planTransfer metadataSync option", () => {
+  test("does not require the copy roles when planning for metadata sync", async () => {
+    const source = fake({ permissions: ["user.read", "asset.read"] });
+    const target = fake({ permissions: ["user.read", "asset.read", "asset.update"] });
+
+    const plan = await planTransfer(options(source, target, { metadataSync: {} }));
+    expect(plan.kind).toBe("transfer-preview");
+  });
+
+  test("refuses a target without asset.update, and does not accept asset.upload instead", async () => {
+    const source = fake({ permissions: ["user.read", "asset.read"] });
+    const target = fake({ permissions: ["user.read", "asset.read", "asset.upload"] });
+
+    await expect(planTransfer(options(source, target, { metadataSync: {} }))).rejects.toThrow("asset.update");
+    expect(source.requests).toHaveLength(0);
+  });
+
+  test("album and tag permissions are added only for enabled options", async () => {
+    const source = fake({ permissions: ["user.read", "asset.read"] });
+    const target = fake({ permissions: ["user.read", "asset.read", "asset.update"] });
+
+    await expect(planTransfer(options(source, target, { metadataSync: { includeTags: true } }))).rejects.toThrow("tag.asset");
+    await expect(planTransfer(options(source, target, { metadataSync: { includeAlbums: true } }))).rejects.toThrow("album.read");
   });
 });

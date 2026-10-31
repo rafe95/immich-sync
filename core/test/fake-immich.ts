@@ -9,6 +9,8 @@ export type FakeImmichOptions = {
   user?: { id: string; email: string; name: string };
   assets?: FakeAsset[];
   searchErrorChecksums?: string[];
+  /** Every metadata search answers 400 with this validation message (as a real server does for a rejected request). */
+  rejectSearchWith?: string;
   incompleteSearchChecksums?: string[];
   assetInfoFailures?: string[];
   downloadFailures?: string[];
@@ -26,8 +28,23 @@ export type FakeImmichOptions = {
   onAlbumList?: (assetId?: string) => void;
   onAlbumCreate?: (albumName: string) => void;
   returnForeignAlbumsForOwnedQueries?: boolean;
+  tags?: FakeTag[];
+  tagListFailures?: boolean;
+  tagUpsertFailures?: string[];
+  tagAssignFailures?: string[];
+  /** Assign calls report success but do not attach the tags. */
+  tagAssignNoOp?: boolean;
+  /** Date updates are accepted but ignored (to test verification). */
+  ignoreDateUpdates?: boolean;
   originals?: Record<string, Uint8Array>;
-  onDownload?: (assetId: string) => void;
+  /** May return a promise; the request is held until it resolves (to test live events). */
+  onDownload?: (assetId: string) => void | Promise<void>;
+  /** Held until it resolves; called before an asset update (PUT /api/assets/:id) and before a trash request. */
+  onAssetUpdate?: (assetId: string) => void | Promise<void>;
+  onTrash?: (ids: string[]) => void | Promise<void>;
+  trashFailures?: string[];
+  /** Uploaded assets are returned without exifInfo by this many asset-info GETs (Infinity: never ready). */
+  deferExifGets?: number;
   pageSize?: number;
 };
 
@@ -42,7 +59,10 @@ export type FakeAlbum = {
   isActivityEnabled?: boolean;
 };
 
+export type FakeTag = { id: string; name: string; value: string };
+
 export type FakeAsset = {
+  tags?: FakeTag[];
   id: string;
   checksum: string;
   ownerId: string;
@@ -59,12 +79,15 @@ export type FakeAsset = {
   exifInfo?: {
     fileSizeInByte?: number | null;
     dateTimeOriginal?: string | null;
+    timeZone?: string | null;
     description?: string | null;
     rating?: number | null;
     latitude?: number | null;
     longitude?: number | null;
   };
 };
+
+const usedPorts = new Set<number>();
 
 export function startFakeImmich(options: FakeImmichOptions = {}) {
   const version = options.version ?? { major: 3, minor: 3, patch: 3 };
@@ -73,7 +96,9 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
   const user = options.user ?? { id: "u-1", email: "owner@example.com", name: "Owner" };
   const assets = options.assets ?? [];
   const albums = options.albums ?? [];
+  const tags = options.tags ?? [];
   const addedAlbumAssetIds = new Set<string>();
+  const deferredExif = new Map<string, number>();
   const requests: Array<{ method: string; path: string; body?: unknown }> = [];
   const uploadedMedia: Array<{ id: string; fileName: string; bytes: Uint8Array; livePhotoVideoId: string | null }> = [];
 
@@ -102,7 +127,10 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
     updatedAt: "2024-01-01T00:00:00.000Z",
   });
 
-  const server = Bun.serve({
+  // Loopback only: a default 0.0.0.0 bind can succeed on a port another local program already holds on 127.0.0.1,
+  // and requests would then reach that program (seen as intermittent 403/"Unable to connect" preflight failures).
+  const start = () => Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     routes: {
       "/api/server/ping": () => json({ res: "pong" }),
@@ -123,18 +151,42 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
 
       if (!authed(req)) return unauthorized();
 
+      if (req.method === "POST" && path === "/api/search/metadata" && options.rejectSearchWith) {
+        return json({ message: "Validation failed", errors: [{ path: ["filter"], message: options.rejectSearchWith }], statusCode: 400 }, 400);
+      }
       if (req.method === "POST" && path === "/api/search/metadata") {
         const search = body as {
           cursor?: string;
           size?: number;
           withDeleted?: boolean;
           filter?: {
+            trashedAt?: { eq?: string | null; ne?: string | null };
             checksum?: { eq?: string };
             takenAt?: { gte?: string; lte?: string };
             type?: { eq?: "IMAGE" | "VIDEO"; in?: Array<"IMAGE" | "VIDEO"> };
             visibility?: { eq?: FakeAsset["visibility"]; in?: FakeAsset["visibility"][] };
           };
         };
+        // Like Immich v3.3.5: the deprecated withDeleted flag cannot be combined with filter.
+        if (search.filter && search.withDeleted !== undefined) {
+          return json({
+            message: "Validation failed",
+            errors: [{ code: "custom", path: ["withDeleted"], message: "Deprecated field withDeleted cannot be combined with filter" }],
+            statusCode: 400,
+          }, 400);
+        }
+        // Like Immich v3.3.5: date filters must be full ISO 8601 datetimes with a time zone (not plain dates).
+        const strictDatetime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+        for (const edge of ["gte", "lte"] as const) {
+          const value = search.filter?.takenAt?.[edge];
+          if (value !== undefined && !strictDatetime.test(value)) {
+            return json({
+              message: "Validation failed",
+              errors: [{ code: "invalid_format", format: "datetime", path: ["filter", "takenAt", edge], message: "Invalid input: expected ISO 8601 datetime string" }],
+              statusCode: 400,
+            }, 400);
+          }
+        }
         const checksum = search.filter?.checksum?.eq;
         options.onMetadataSearch?.(checksum);
         if (checksum && options.searchErrorChecksums?.includes(checksum)) {
@@ -142,13 +194,17 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
         }
         if (checksum && options.incompleteSearchChecksums?.includes(checksum)) {
           return json({
-            assets: { items: [], count: 0, total: 1, nextCursor: null },
+            assets: { items: [], count: 0, total: 0, nextCursor: "stuck" },
             albums: { items: [], count: 0, total: 0 },
           });
         }
         const filter = search.filter;
         const matching = assets.filter((asset) => {
-          if (!search.withDeleted && asset.isTrashed) return false;
+          // Trash state must be stated explicitly: without a trashedAt filter nothing trashed is returned.
+          const trashedFilter = filter?.trashedAt;
+          if (trashedFilter && "eq" in trashedFilter && trashedFilter.eq === null && asset.isTrashed) return false;
+          if (trashedFilter && "ne" in trashedFilter && trashedFilter.ne === null && !asset.isTrashed) return false;
+          if (!trashedFilter && asset.isTrashed) return false;
           if (filter?.checksum?.eq && asset.checksum !== filter.checksum.eq) return false;
           if (filter?.type?.eq && asset.type !== filter.type.eq) return false;
           if (filter?.type?.in && !filter.type.in.includes(asset.type)) return false;
@@ -164,7 +220,8 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
         const items = matching.slice(cursor, cursor + size);
         const nextCursor = cursor + items.length < matching.length ? String(cursor + items.length) : null;
         return json({
-          assets: { items, nextCursor, count: items.length, total: matching.length },
+          // Like Immich v3.3.5: `total` is the size of this page, not of the whole result.
+          assets: { items, nextCursor, count: items.length, total: items.length },
           albums: { items: [], nextCursor: null, count: 0, total: 0 },
         });
       }
@@ -247,6 +304,91 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
         return json({ success: true });
       }
 
+      if (req.method === "DELETE" && path === "/api/assets") {
+        const del = (await req.json()) as { ids?: string[]; force?: boolean };
+        requestRecord.body = del;
+        if (!permissions.includes("all") && !permissions.includes("asset.delete")) {
+          return json({ message: "Missing asset.delete permission", statusCode: 403 }, 403);
+        }
+        const ids = del.ids ?? [];
+        await options.onTrash?.(ids);
+        if (ids.some((id) => options.trashFailures?.includes(id))) {
+          return json({ message: "Trash failed", statusCode: 500 }, 500);
+        }
+        for (const id of ids) {
+          if (del.force === true) {
+            const index = assets.findIndex((candidate) => candidate.id === id);
+            if (index >= 0) assets.splice(index, 1);
+          } else {
+            const asset = assets.find((candidate) => candidate.id === id);
+            if (asset) asset.isTrashed = true;
+          }
+        }
+        return new Response(null, { status: 204 });
+      }
+
+      if (path === "/api/tags" || path === "/api/tags/assets") {
+        const need = (permission: string) =>
+          !permissions.includes("all") && !permissions.includes(permission)
+            ? json({ message: `Missing ${permission} permission`, statusCode: 403 }, 403)
+            : undefined;
+        const tagResponse = (tag: FakeTag) => ({
+          ...tag,
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        });
+        if (req.method === "GET" && path === "/api/tags") {
+          const denied = need("tag.read");
+          if (denied) return denied;
+          if (options.tagListFailures) return json({ message: "Tag listing failed", statusCode: 500 }, 500);
+          return json(tags.map(tagResponse));
+        }
+        if (req.method === "PUT" && path === "/api/tags") {
+          body = await req.json();
+          requestRecord.body = body;
+          const denied = need("tag.create");
+          if (denied) return denied;
+          const values = (body as { tags?: string[] }).tags ?? [];
+          if (values.some((value) => options.tagUpsertFailures?.includes(value))) {
+            return json({ message: "Tag upsert failed", statusCode: 500 }, 500);
+          }
+          const result: FakeTag[] = [];
+          for (const value of values) {
+            let tag = tags.find((candidate) => candidate.value === value);
+            if (!tag) {
+              tag = { id: `tag-${tags.length + 1}`, name: value.split("/").pop() ?? value, value };
+              tags.push(tag);
+            }
+            result.push(tag);
+          }
+          return json(result.map(tagResponse));
+        }
+        if (req.method === "PUT" && path === "/api/tags/assets") {
+          body = await req.json();
+          requestRecord.body = body;
+          const denied = need("tag.asset");
+          if (denied) return denied;
+          const { assetIds = [], tagIds = [] } = body as { assetIds?: string[]; tagIds?: string[] };
+          if (assetIds.some((id) => options.tagAssignFailures?.includes(id))) {
+            return json({ message: "Tag assignment failed", statusCode: 500 }, 500);
+          }
+          let count = 0;
+          for (const assetId of assetIds) {
+            const asset = assets.find((candidate) => candidate.id === assetId);
+            if (!asset || options.tagAssignNoOp) continue;
+            asset.tags ??= [];
+            for (const tagId of tagIds) {
+              const tag = tags.find((candidate) => candidate.id === tagId);
+              if (tag && !asset.tags.some((candidate) => candidate.id === tagId)) {
+                asset.tags.push(tag);
+                count++;
+              }
+            }
+          }
+          return json({ count });
+        }
+      }
+
       const assetMatch = path.match(/^\/api\/assets\/([^/]+)$/);
       if (req.method === "GET" && assetMatch) {
         const id = decodeURIComponent(assetMatch[1] ?? "");
@@ -254,6 +396,17 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
           return json({ message: "Asset lookup failed", statusCode: 500 }, 500);
         }
         const asset = assets.find((candidate) => candidate.id === id);
+        const deferred = deferredExif.get(id);
+        if (asset && deferred !== undefined && deferred > 0) {
+          deferredExif.set(id, deferred - 1);
+          const { exifInfo: _pending, ...withoutExif } = asset;
+          return json({
+            ...withoutExif,
+            fileModifiedAt: asset.fileModifiedAt ?? asset.fileCreatedAt,
+            isFavorite: asset.isFavorite ?? false,
+            duration: asset.duration ?? null,
+          });
+        }
         return asset
           ? json({
             ...asset,
@@ -266,6 +419,7 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
 
       if (req.method === "PUT" && assetMatch) {
         const id = decodeURIComponent(assetMatch[1] ?? "");
+        await options.onAssetUpdate?.(id);
         body = await req.json();
         requestRecord.body = body;
         if (!permissions.includes("all") && !permissions.includes("asset.update")) {
@@ -277,6 +431,7 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
         const asset = assets.find((candidate) => candidate.id === id);
         if (!asset) return json({ message: "Asset not found", statusCode: 404 }, 404);
         const update = body as {
+          dateTimeOriginal?: string;
           isFavorite?: boolean;
           visibility?: FakeAsset["visibility"];
           description?: string;
@@ -284,6 +439,15 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
           latitude?: number;
           longitude?: number;
         };
+        if (update.dateTimeOriginal !== undefined && !options.ignoreDateUpdates) {
+          // Mirrors Immich deriving the zone from the offset carried by dateTimeOriginal.
+          const offset = /([+-])(\d{2}):(\d{2})$/.exec(update.dateTimeOriginal);
+          const instant = new Date(update.dateTimeOriginal);
+          if (Number.isNaN(instant.getTime())) return json({ message: "Invalid dateTimeOriginal", statusCode: 400 }, 400);
+          asset.exifInfo ??= {};
+          asset.exifInfo.dateTimeOriginal = instant.toISOString();
+          asset.exifInfo.timeZone = offset ? `UTC${offset[1]}${Number(offset[2])}${offset[3] === "00" ? "" : `:${offset[3]}`}` : "UTC";
+        }
         if (update.isFavorite !== undefined) asset.isFavorite = update.isFavorite;
         if (update.visibility !== undefined) asset.visibility = update.visibility;
         asset.exifInfo ??= {};
@@ -302,7 +466,7 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
       const originalMatch = path.match(/^\/api\/assets\/([^/]+)\/original$/);
       if (req.method === "GET" && originalMatch) {
         const id = decodeURIComponent(originalMatch[1] ?? "");
-        options.onDownload?.(id);
+        await options.onDownload?.(id);
         if (options.downloadFailures?.includes(id)) {
           return json({ message: "Original download failed", statusCode: 500 }, 500);
         }
@@ -361,6 +525,7 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
           exifInfo: { fileSizeInByte: bytes.byteLength, dateTimeOriginal: createdAt },
         };
         assets.push(uploaded);
+        if (options.deferExifGets !== undefined) deferredExif.set(id, options.deferExifGets);
         uploadedMedia.push({
           id,
           fileName,
@@ -373,6 +538,16 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
       return json({ message: "not found", statusCode: 404 }, 404);
     },
   });
+  // Never reuse a port within this process: clients may pool keep-alive sockets to a stopped fake server,
+  // and a new server on the same port would then receive a dead connection (an intermittent "request failed").
+  let server = start();
+  const rejected: Array<{ stop(force?: boolean): unknown }> = [];
+  while (usedPorts.has(server.port!)) {
+    rejected.push(server);
+    server = start();
+  }
+  rejected.forEach((duplicate) => duplicate.stop(true));
+  usedPorts.add(server.port!);
 
   return {
     url: `http://127.0.0.1:${server.port}/api`,

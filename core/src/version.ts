@@ -2,8 +2,11 @@
 
 export type Version = { major: number; minor: number; patch: number };
 
-/** Oldest supported Immich version (structured search with filter + cursor arrived in v3.2). */
-export const MIN_SUPPORTED: Version = { major: 3, minor: 2, patch: 0 };
+/**
+ * Oldest supported Immich version. v3.3 is where structured search (filter + cursor pagination, explicit trashedAt)
+ * behaves as the engine expects; v3.2 is not supported.
+ */
+export const MIN_SUPPORTED: Version = { major: 3, minor: 3, patch: 0 };
 
 /** Newest major.minor the engine has been tested against. Newer versions work but get a warning. */
 export const TESTED_UP_TO: Version = { major: 3, minor: 3, patch: Number.MAX_SAFE_INTEGER };
