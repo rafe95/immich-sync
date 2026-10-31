@@ -30,7 +30,7 @@ afterAll(async () => {
 describe.skipIf(!url)("migrations (PostgreSQL)", () => {
   test("apply once, then are a no-op", async () => {
     await sql!.unsafe(`create schema ${schema}`);
-    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql", "0003_skipped_runs.sql"]);
+    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql", "0003_skipped_runs.sql", "0004_users.sql"]);
     expect(await migrate(sql!)).toEqual([]);
   });
 

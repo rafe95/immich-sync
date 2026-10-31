@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { FakeExecutor } from "./fake-executor.ts";
-import { loggedIn, startTestServer } from "./helpers.ts";
+import { loggedIn, seedUser, startTestServer } from "./helpers.ts";
 
 let stops: Array<() => unknown> = [];
 afterEach(() => {
@@ -19,6 +19,20 @@ async function setup(opts: { heartbeatMs?: number } = {}) {
   const job = (over: Record<string, unknown> = {}) => ({ name: "Nightly", steps: [{ operation: "copy", sourceId: A, targetId: B }], ...over });
   return { ...t, ...client, executor, A, B, C, job };
 }
+
+describe("run attribution", () => {
+  test("started_by is the username of whoever started the run", async () => {
+    const t = await setup();
+    await seedUser(t.users, "bob", "bobs long passphrase", "user");
+    const bob = await loggedIn(t.base, "bob", "bobs long passphrase");
+    const adhoc = await bob.call("POST", "/api/runs", { name: "x", steps: [{ operation: "copy", sourceId: t.A, targetId: t.B }], dryRun: true });
+    expect(adhoc.status).toBe(202);
+    expect((await adhoc.json()).startedBy).toBe("bob");
+    const job = await (await t.call("POST", "/api/jobs", t.job())).json();
+    const saved = await bob.call("POST", `/api/jobs/${job.id}/run`, { dryRun: true });
+    expect((await saved.json()).startedBy).toBe("bob");
+  });
+});
 
 describe("jobs API", () => {
   test("requires a session and CSRF for every route", async () => {

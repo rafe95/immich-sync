@@ -1,6 +1,7 @@
 /** PostgreSQL-backed stores; runs only when TEST_DATABASE_URL is set. Uses a throwaway schema. */
 import { afterAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
+import { pgUserStore } from "../src/auth/users.ts";
 import { pgSessionStore, hashToken } from "../src/auth/sessions.ts";
 import { migrate } from "../src/db/migrate.ts";
 import { decryptSecret, encryptSecret } from "../src/crypto.ts";
@@ -21,14 +22,15 @@ afterAll(async () => {
 describe.skipIf(!url)("sessions and instances (PostgreSQL)", () => {
   test("migrations create the sessions table", async () => {
     await sql!.unsafe(`create schema ${schema}`);
-    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql", "0003_skipped_runs.sql"]);
+    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql", "0003_skipped_runs.sql", "0004_users.sql"]);
   });
 
   test("session store: create, get, expire, delete", async () => {
     const s = pgSessionStore(sql!);
     const now = new Date();
-    await s.create(hashToken("a"), { csrfToken: "c1", expiresAt: new Date(now.getTime() + 60_000) });
-    await s.create(hashToken("old"), { csrfToken: "c2", expiresAt: new Date(now.getTime() - 1000) });
+    const user = await pgUserStore(sql!).create("sessionuser", "hash", "user");
+    await s.create(hashToken("a"), { csrfToken: "c1", expiresAt: new Date(now.getTime() + 60_000), userId: user.id });
+    await s.create(hashToken("old"), { csrfToken: "c2", expiresAt: new Date(now.getTime() - 1000), userId: user.id });
     expect((await s.get(hashToken("a"), now))?.csrfToken).toBe("c1");
     expect(await s.get(hashToken("old"), now)).toBeNull();
     await s.purgeExpired(now);
@@ -36,6 +38,10 @@ describe.skipIf(!url)("sessions and instances (PostgreSQL)", () => {
     expect(count).toBe(1);
     await s.delete(hashToken("a"));
     expect(await s.get(hashToken("a"), now)).toBeNull();
+    // deleting the user removes their sessions
+    await s.create(hashToken("b"), { csrfToken: "c3", expiresAt: new Date(now.getTime() + 60_000), userId: user.id });
+    await pgUserStore(sql!).delete(user.id);
+    expect(await s.get(hashToken("b"), now)).toBeNull();
   });
 
   test("instance store: bytea round trip, alias conflict, single default, in-use delete, check jsonb", async () => {
@@ -61,7 +67,8 @@ describe.skipIf(!url)("sessions and instances (PostgreSQL)", () => {
   test("full API on PostgreSQL: create, check against the fake Immich, in-use 409", async () => {
     const fake = startFakeImmich();
     const store = pgInstanceStore(sql!);
-    const t = startTestServer({ store, sessions: pgSessionStore(sql!) });
+    const t = startTestServer({ store, sessions: pgSessionStore(sql!), users: pgUserStore(sql!) });
+    await t.ready;
     try {
       const { call } = await loggedIn(t.base);
       const created = await (await call("POST", "/api/instances", { alias: "fake", apiUrl: fake.url, apiKey: fake.apiKey })).json();

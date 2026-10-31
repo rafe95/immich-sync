@@ -18,7 +18,6 @@ services:
     environment:
       TZ: ${TZ:-Europe/Lisbon}
       DATABASE_URL: postgres://immich_sync:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/immich_sync
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env} # encrypts stored API keys
       TRUST_PROXY: ${TRUST_PROXY:-false} # true only behind your own reverse proxy: login limits then use X-Forwarded-For
 

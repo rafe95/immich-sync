@@ -1,54 +1,16 @@
 /**
- * Single-admin authentication: login/logout/me, the session cookie, and the one central
+ * Authentication: first-run setup, login/logout/me, the session cookie, and the one central
  * guard (`protect`) that enforces "session required" and CSRF for state-changing requests.
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { SQL } from "bun";
 import { errorResponse, HttpError, json, readJsonObject } from "../http.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
+import { memoryUserStore, passwordProblem, normalizeUsername, userView, usernameProblem, type User, type UserStore } from "./users.ts";
 import { hashToken, newToken, SESSION_TTL_MS, type Session, type SessionStore } from "./sessions.ts";
 
 export const SESSION_COOKIE = "immich_sync_session";
 export const CSRF_HEADER = "x-csrf-token";
-
-/** Where the changed admin password hash lives. While none is stored, ADMIN_PASSWORD from the environment is the credential. */
-export type PasswordStore = {
-  getHash(): Promise<string | null>;
-  setHash(hash: string): Promise<void>;
-};
-
-export const PASSWORD_SETTING_KEY = "admin_password_hash";
-export const MIN_PASSWORD_LENGTH = 12;
-export const MAX_PASSWORD_LENGTH = 256;
-
-export function memoryPasswordStore(): PasswordStore & { hash: string | null } {
-  const store = {
-    hash: null as string | null,
-    async getHash() {
-      return store.hash;
-    },
-    async setHash(h: string) {
-      store.hash = h;
-    },
-  };
-  return store;
-}
-
-export function pgPasswordStore(sql: SQL): PasswordStore {
-  return {
-    async getHash() {
-      const [r] = await sql`select value from settings where key = ${PASSWORD_SETTING_KEY}`;
-      if (!r) return null;
-      const v = typeof r.value === "string" && r.value.startsWith('"') ? JSON.parse(r.value) : r.value;
-      return typeof v === "string" && v ? v : null;
-    },
-    async setHash(hash) {
-      await sql`insert into settings (key, value) values (${PASSWORD_SETTING_KEY}, ${JSON.stringify(hash)}::text::jsonb)
-        on conflict (key) do update set value = excluded.value`;
-    },
-  };
-}
 
 /**
  * Key for login backoff. Behind a reverse proxy every request has the proxy's socket address, so
@@ -64,16 +26,20 @@ export function clientKeyFor(req: Request, socketAddress: string | undefined, tr
 
 /** Returns a problem message for an unacceptable new password, or null. */
 export function newPasswordProblem(newPassword: string, current: string): string | null {
-  if (newPassword.length < MIN_PASSWORD_LENGTH) return `The new password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
-  if (newPassword.length > MAX_PASSWORD_LENGTH) return `The new password must be at most ${MAX_PASSWORD_LENGTH} characters.`;
+  const problem = passwordProblem(newPassword);
+  if (problem) return problem.replace("The password", "The new password");
   if (newPassword === current) return "The new password must differ from the current one.";
   return null;
 }
 
+export const hashPassword = (password: string) => Bun.password.hash(password, { algorithm: "argon2id" });
+
+/** The authenticated request context handed to protected handlers. */
+export type AuthContext = Session & { user: User };
+
 export type AuthOptions = {
-  adminPassword: string;
-  /** Stored password hash; takes precedence over adminPassword once set. Defaults to in-memory. */
-  passwords?: PasswordStore;
+  /** Defaults to an in-memory store (tests). */
+  users?: UserStore;
   sessions: SessionStore;
   /** "auto": Secure when the request arrived over HTTPS (directly or via X-Forwarded-Proto). */
   secureCookies?: boolean | "auto";
@@ -101,12 +67,12 @@ function readCookie(req: Request, name: string): string | null {
 }
 
 export function createAuth(options: AuthOptions) {
-  // Fail closed: an empty password would let anyone in.
-  if (!options.adminPassword) throw new Error("ADMIN_PASSWORD is required.");
   const { sessions } = options;
   const limiter = options.limiter ?? new LoginRateLimiter();
   const now = options.now ?? (() => new Date());
-  const passwords = options.passwords ?? memoryPasswordStore();
+  const users = options.users ?? memoryUserStore();
+  // Verified for unknown usernames so a login attempt takes about as long either way.
+  let dummyHash: Promise<string> | null = null;
   const secureMode = options.secureCookies ?? "auto";
 
   const isSecure = (req: Request) =>
@@ -126,7 +92,7 @@ export function createAuth(options: AuthOptions) {
    * The central guard. Requires a valid session; for non-safe methods also requires the
    * session's CSRF token in the X-CSRF-Token header. Handlers only run when both hold.
    */
-  function protect<R extends Request>(handler: (req: R, session: Session) => Response | Promise<Response>) {
+  function protect<R extends Request>(handler: (req: R, ctx: AuthContext) => Response | Promise<Response>) {
     return async (req: R): Promise<Response> => {
       const session = await currentSession(req);
       if (!session) return json({ message: "Authentication required." }, 401);
@@ -134,8 +100,10 @@ export function createAuth(options: AuthOptions) {
         const sent = req.headers.get(CSRF_HEADER);
         if (!sent || !safeEqual(sent, session.csrfToken)) return json({ message: "Invalid or missing CSRF token." }, 403);
       }
+      const user = await users.get(session.userId);
+      if (!user) return json({ message: "Authentication required." }, 401);
       try {
-        return await handler(req, session);
+        return await handler(req, { ...session, user });
       } catch (err) {
         if (err instanceof HttpError) return errorResponse(err);
         throw err;
@@ -143,35 +111,67 @@ export function createAuth(options: AuthOptions) {
     };
   }
 
-  /** Checks against the stored hash when there is one, otherwise the environment password. */
-  async function passwordMatches(candidate: string): Promise<boolean> {
-    const hash = await passwords.getHash();
-    if (hash) {
-      try {
-        return await Bun.password.verify(candidate, hash);
-      } catch {
-        return false; // a corrupt stored hash fails closed
-      }
-    }
-    return safeEqual(candidate, options.adminPassword);
+  /** Like protect, and the signed-in user must be an administrator. */
+  function protectAdmin<R extends Request>(handler: (req: R, ctx: AuthContext) => Response | Promise<Response>) {
+    return protect<R>((req, ctx) =>
+      ctx.user.role === "admin" ? handler(req, ctx) : json({ message: "Administrator access required." }, 403),
+    );
   }
 
-  async function startSession(req: Request, status = 200) {
+  async function verify(password: string, hash: string): Promise<boolean> {
+    try {
+      return await Bun.password.verify(password, hash);
+    } catch {
+      return false; // a corrupt stored hash fails closed
+    }
+  }
+
+  async function startSession(req: Request, user: User, status = 200) {
     const t = now();
     await sessions.purgeExpired(t);
     const token = newToken();
-    const session: Session = { csrfToken: newToken(), expiresAt: new Date(t.getTime() + SESSION_TTL_MS) };
+    const session: Session = { csrfToken: newToken(), expiresAt: new Date(t.getTime() + SESSION_TTL_MS), userId: user.id };
     await sessions.create(hashToken(token), session);
-    return json({ authenticated: true, csrfToken: session.csrfToken }, status, {
+    return json({ authenticated: true, csrfToken: session.csrfToken, user: userView(user) }, status, {
       "set-cookie": cookie(req, token, SESSION_TTL_MS / 1000),
     });
   }
 
+  const tooMany = (wait: number) => json({ message: "Too many failed attempts. Try again later." }, 429, { "retry-after": String(wait) });
+
+  /** Public: tells the frontend whether to show the first-run setup. */
+  const setupStatus = async () => json({ needsSetup: (await users.count()) === 0 });
+
+  /**
+   * Public and CSRF-exempt (there is no session yet). Works only while no user exists; the store
+   * makes check-and-insert atomic, so concurrent requests can never both succeed.
+   */
+  const setup = async (req: Request, clientKey: string): Promise<Response> => {
+    const wait = limiter.retryAfterSeconds(clientKey);
+    if (wait > 0) return tooMany(wait);
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(req);
+      const problem = usernameProblem(body.username) ?? passwordProblem(body.password);
+      if (problem) throw new HttpError(400, problem);
+    } catch (err) {
+      if (err instanceof HttpError) return errorResponse(err);
+      throw err;
+    }
+    // A closed setup reveals nothing to guess, so it never counts toward the shared login backoff (that would let
+    // anyone lock everybody out of login from a shared address) and it is refused before any password hashing.
+    const closed = () => json({ message: "Setup is already complete." }, 409);
+    if ((await users.count()) > 0) return closed();
+    const user = await users.createFirstAdmin(normalizeUsername(body.username as string), await hashPassword(body.password as string));
+    if (!user) return closed();
+    limiter.recordSuccess(clientKey);
+    await users.touchLogin(user.id, now());
+    return startSession(req, user, 201);
+  };
+
   const login = async (req: Request, clientKey: string): Promise<Response> => {
     const wait = limiter.retryAfterSeconds(clientKey);
-    if (wait > 0) {
-      return json({ message: "Too many failed attempts. Try again later." }, 429, { "retry-after": String(wait) });
-    }
+    if (wait > 0) return tooMany(wait);
     let body: Record<string, unknown>;
     try {
       body = await readJsonObject(req);
@@ -179,37 +179,42 @@ export function createAuth(options: AuthOptions) {
       if (err instanceof HttpError) return errorResponse(err);
       throw err;
     }
+    if ((await users.count()) === 0) return json({ message: "No user exists yet. Complete the first-run setup.", needsSetup: true }, 409);
+    const username = typeof body.username === "string" ? normalizeUsername(body.username) : "";
     const password = typeof body.password === "string" ? body.password : "";
-    if (!password || !(await passwordMatches(password))) {
+    const found = username ? await users.getCredentials(username) : null;
+    dummyHash ??= hashPassword("dummy password for unknown users");
+    const ok = await verify(password || "-", found?.hash ?? (await dummyHash));
+    if (!found || !password || !ok) {
       limiter.recordFailure(clientKey);
-      return json({ message: "Invalid password." }, 401);
+      return json({ message: "Invalid username or password." }, 401);
     }
     limiter.recordSuccess(clientKey);
-    return startSession(req);
+    await users.touchLogin(found.user.id, now());
+    return startSession(req, found.user);
   };
 
-  /** Authenticated + CSRF (via protect). Same failure backoff as login, keyed by the client. */
+  /** Authenticated + CSRF (via protect). Changes the signed-in user's own password. Same failure backoff as login. */
   const changePassword = (clientKeyOf: (req: Request) => string) =>
-    protect(async (req) => {
+    protect(async (req, ctx) => {
       const clientKey = clientKeyOf(req);
       const wait = limiter.retryAfterSeconds(clientKey);
-      if (wait > 0) {
-        return json({ message: "Too many failed attempts. Try again later." }, 429, { "retry-after": String(wait) });
-      }
+      if (wait > 0) return tooMany(wait);
       const body = await readJsonObject(req);
       const current = typeof body.currentPassword === "string" ? body.currentPassword : "";
       const next = typeof body.newPassword === "string" ? body.newPassword : "";
-      if (!current || !(await passwordMatches(current))) {
+      const hash = await users.getHash(ctx.user.id);
+      if (!current || !hash || !(await verify(current, hash))) {
         limiter.recordFailure(clientKey);
         return json({ message: "The current password is incorrect." }, 403);
       }
       limiter.recordSuccess(clientKey);
       const problem = newPasswordProblem(next, current);
       if (problem) throw new HttpError(400, problem);
-      await passwords.setHash(await Bun.password.hash(next, { algorithm: "argon2id" }));
-      // End every session, including this one, and hand back a fresh token and CSRF secret.
-      await sessions.deleteAll();
-      return startSession(req);
+      await users.update(ctx.user.id, { hash: await hashPassword(next) });
+      // End all of this user's sessions, including this one, and hand back a fresh token and CSRF secret.
+      await sessions.deleteForUser(ctx.user.id);
+      return startSession(req, ctx.user);
     });
 
   const logout = protect(async (req) => {
@@ -217,9 +222,9 @@ export function createAuth(options: AuthOptions) {
     return json({ authenticated: false }, 200, { "set-cookie": cookie(req, "", 0) });
   });
 
-  const me = protect((_req, session) => json({ authenticated: true, csrfToken: session.csrfToken }));
+  const me = protect((_req, ctx) => json({ authenticated: true, csrfToken: ctx.csrfToken, user: userView(ctx.user) }));
 
-  return { protect, login, logout, me, changePassword };
+  return { protect, protectAdmin, setup, setupStatus, login, logout, me, changePassword, users, sessions };
 }
 
 export type Auth = ReturnType<typeof createAuth>;

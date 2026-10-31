@@ -2,6 +2,8 @@
   import { ApiError } from "./lib/api.ts";
   import { login, session } from "./lib/session.svelte.ts";
 
+  import { loginBody } from "./lib/users.ts";
+  let username = $state("");
   let password = $state("");
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -11,7 +13,8 @@
     busy = true;
     error = null;
     try {
-      await login(password);
+      const b = loginBody(username, password);
+      await login(b.username, b.password);
       password = "";
     } catch (err) {
       error = err instanceof ApiError || err instanceof Error ? err.message : String(err);
@@ -31,13 +34,17 @@
       <p class="text-sm text-error-500" role="alert">Could not reach the backend: {session.error}</p>
     {/if}
     <label class="label">
+      <span class="label-text">Username</span>
+      <input class="input" type="text" autocomplete="username" required bind:value={username} />
+    </label>
+    <label class="label">
       <span class="label-text">Password</span>
       <input class="input" type="password" autocomplete="current-password" required bind:value={password} aria-describedby={error ? "login-error" : undefined} />
     </label>
     {#if error}
       <p id="login-error" class="text-sm text-error-500" role="alert">{error}</p>
     {/if}
-    <button class="btn preset-filled-primary-500 w-full" type="submit" disabled={busy || !password}>
+    <button class="btn preset-filled-primary-500 w-full" type="submit" disabled={busy || !username.trim() || !password}>
       {busy ? "Signing in…" : "Sign in"}
     </button>
   </form>

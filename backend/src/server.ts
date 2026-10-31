@@ -4,6 +4,7 @@ import { join, normalize } from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import { clientKeyFor, createAuth, type AuthOptions } from "./auth/auth.ts";
 import { createDashboardRoutes, type DashboardDeps } from "./dashboard.ts";
+import { createUserRoutes } from "./auth/user-routes.ts";
 import { json } from "./http.ts";
 import { createSettingsRoutes, type SettingsDeps } from "./settings.ts";
 import { createJobRoutes, type JobRouteDeps } from "./jobs/routes.ts";
@@ -28,14 +29,16 @@ export type ServerDeps = {
 
 export function createServer(deps: ServerDeps) {
   const auth = createAuth(deps.auth);
+  const users = createUserRoutes({ users: auth.users, sessions: auth.sessions });
   const instances = createInstanceRoutes(deps.instances);
   const jobs = createJobRoutes(deps.jobs);
   const runs = createRunRoutes(deps.runs);
   const dashboard = createDashboardRoutes(deps.dashboard);
   const settings = createSettingsRoutes(deps.settings);
   const clientKey = (req: Request): string => clientKeyFor(req, server.requestIP(req)?.address, deps.trustProxy ?? false);
-  // Every /api route except health and login goes through auth.protect (session + CSRF).
+  // Every /api route except health, setup status/setup and login goes through auth.protect (session + CSRF).
   const p = auth.protect;
+  const admin = auth.protectAdmin;
 
   const server: Bun.Server<undefined> = Bun.serve({
     hostname: deps.hostname ?? "127.0.0.1",
@@ -47,10 +50,14 @@ export function createServer(deps: ServerDeps) {
           return json({ status: database ? "ok" : "degraded", database, version: pkg.version }, database ? 200 : 503);
         },
       },
+      "/api/setup/status": { GET: auth.setupStatus },
+      "/api/setup": { POST: (req) => auth.setup(req, clientKey(req)) },
       "/api/auth/login": { POST: (req) => auth.login(req, clientKey(req)) },
       "/api/auth/logout": { POST: auth.logout },
       "/api/auth/me": { GET: auth.me },
       "/api/auth/password": { POST: auth.changePassword(clientKey) },
+      "/api/users": { GET: admin(users.list), POST: admin(users.create) },
+      "/api/users/:id": { PATCH: admin(users.update), DELETE: admin(users.remove) },
       "/api/instances": { GET: p(instances.list), POST: p(instances.create) },
       "/api/instances/:id": { GET: p(instances.get), PATCH: p(instances.update), DELETE: p(instances.remove) },
       "/api/instances/:id/check": { POST: p(instances.check) },
@@ -65,7 +72,7 @@ export function createServer(deps: ServerDeps) {
       "/api/runs/:id/log": { GET: p(runs.log) },
       "/api/runs/:id/events": { GET: p((req) => runs.events(req, server)) },
       "/api/dashboard": { GET: p(dashboard.get) },
-      "/api/settings/retention": { GET: p(settings.getRetention), PUT: p(settings.putRetention) },
+      "/api/settings/retention": { GET: admin(settings.getRetention), PUT: admin(settings.putRetention) },
       "/api/*": p(() => json({ message: "Not found" }, 404)),
     },
     fetch: (req) => serveStatic(deps.staticDir, new URL(req.url).pathname),

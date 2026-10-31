@@ -93,11 +93,11 @@ export function createJobRoutes(deps: JobRouteDeps) {
     },
 
     /** Run now: body { dryRun?: boolean }. Responds 202 with the queued run; execution continues in the backend. */
-    run: async (req: Request) => {
+    run: async (req: Request, ctx?: { user: { username: string } }) => {
       const id = idOf(req);
       const body = await readOptionalJson(req);
       if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") throw new HttpError(400, "dryRun must be a boolean.");
-      const run = await deps.runs.start({ job: { id }, trigger: "manual", startedBy: "admin", dryRun: body.dryRun === true });
+      const run = await deps.runs.start({ job: { id }, trigger: "manual", startedBy: ctx?.user.username ?? "unknown", dryRun: body.dryRun === true });
       return json(run, 202);
     },
 

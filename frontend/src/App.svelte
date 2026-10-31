@@ -5,6 +5,9 @@
   import Dashboard from "./Dashboard.svelte";
   import Jobs from "./Jobs.svelte";
   import Instances from "./Instances.svelte";
+  import Setup from "./Setup.svelte";
+  import Users from "./Users.svelte";
+  import { isAdmin } from "./lib/users.ts";
   import Login from "./Login.svelte";
   import Run from "./Run.svelte";
   import Settings from "./Settings.svelte";
@@ -18,8 +21,11 @@
     { id: "jobs", label: "Jobs", enabled: true },
     { id: "history", label: "History", enabled: true },
     { id: "instances", label: "Instances", enabled: true },
+    { id: "users", label: "Users", enabled: true },
     { id: "settings", label: "Settings", enabled: true },
   ] as const;
+  // Users is for administrators only; the backend enforces the same rule.
+  const visibleScreens = $derived(screens.filter((s) => s.id !== "users" || isAdmin(session.user)));
 
   let current = $state<(typeof screens)[number]["id"]>("dashboard");
   let health = $state<Health | null>(null);
@@ -54,6 +60,8 @@
 
 {#if session.status === "loading"}
   <p class="p-6" role="status">Loading…</p>
+{:else if session.needsSetup}
+  <Setup />
 {:else if session.status === "anonymous"}
   <Login />
 {:else}
@@ -73,13 +81,16 @@
         {:else}
           <span class="badge preset-tonal-surface">Checking backend…</span>
         {/if}
+        {#if session.user}
+          <span class="text-sm">{session.user.username} <span class="badge preset-tonal-surface">{session.user.role}</span></span>
+        {/if}
         <button type="button" class="btn btn-sm preset-tonal-surface" onclick={logout}>Log out</button>
       </div>
     </header>
 
     <div class="grid grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[14rem_1fr] md:grid-rows-1">
       <nav aria-label="Main" class="flex items-start gap-1 overflow-x-auto border-b border-surface-200-800 p-3 md:flex-col md:items-stretch md:border-r md:border-b-0">
-        {#each screens as s (s.id)}
+        {#each visibleScreens as s (s.id)}
           <button
             type="button"
             class="btn justify-start whitespace-nowrap {current === s.id ? 'preset-filled-primary-500' : 'hover:preset-tonal-surface'}"
@@ -98,6 +109,8 @@
       <main class="space-y-4 p-6">
         {#if current === "instances"}
           <Instances />
+        {:else if current === "users" && isAdmin(session.user)}
+          <Users />
         {:else if current === "settings"}
           <Settings />
         {:else if current === "run"}

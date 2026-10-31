@@ -48,14 +48,14 @@ export function createRunRoutes(deps: RunRouteDeps) {
 
   return {
     /** Ad-hoc one-off run from the Run screen: { name?, steps, dryRun? }. */
-    start: async (req: Request) => {
+    start: async (req: Request, ctx?: { user: { username: string } }) => {
       const body = await readJsonObject(req);
       const problems: string[] = [];
       const name = body.name === undefined ? "One-off run" : normalizeName(body.name, problems);
       const steps = normalizeSteps(body.steps, problems);
       if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") problems.push("dryRun must be a boolean.");
       if (problems.length) throw new HttpError(400, "Invalid run.", { problems });
-      const run = await runs.start({ job: { name: name!, steps: steps! }, trigger: "manual", startedBy: "admin", dryRun: body.dryRun === true });
+      const run = await runs.start({ job: { name: name!, steps: steps! }, trigger: "manual", startedBy: ctx?.user.username ?? "unknown", dryRun: body.dryRun === true });
       return json(run, 202);
     },
 

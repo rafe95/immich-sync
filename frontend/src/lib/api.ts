@@ -32,11 +32,18 @@ export type Instance = {
 };
 export type InstanceInput = { alias?: string; apiUrl?: string; apiKey?: string; note?: string | null; isDefault?: boolean };
 
+export type UserRole = "admin" | "user";
+export type SessionUser = { id: string; username: string; role: UserRole };
+export type UserRecord = { id: string; username: string; role: UserRole; createdAt: string; lastLoginAt: string | null };
+export type AuthResponse = { authenticated?: boolean; csrfToken: string; user?: SessionUser };
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
     readonly problems: string[] = [],
+    /** True when the backend answered that no user exists yet (first-run setup is required). */
+    readonly needsSetup: boolean = false,
   ) {
     super(message);
   }
@@ -70,7 +77,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
         options.onUnauthorized?.();
       }
       const problems = Array.isArray(data?.problems) ? (data.problems as string[]) : [];
-      throw new ApiError(res.status, typeof data?.message === "string" ? data.message : `HTTP ${res.status}`, problems);
+      throw new ApiError(res.status, typeof data?.message === "string" ? data.message : `HTTP ${res.status}`, problems, data?.needsSetup === true);
     }
     return data as T;
   }
@@ -82,16 +89,26 @@ export function createApiClient(options: ApiClientOptions = {}) {
   return {
     request,
     hasCsrfToken: () => csrfToken !== null,
-    async login(password: string) {
-      const r = await request<{ csrfToken: string }>("POST", "/api/auth/login", { password });
+    async login(username: string, password: string): Promise<SessionUser | null> {
+      const r = await request<AuthResponse>("POST", "/api/auth/login", { username, password });
       remember(r);
+      return r.user ?? null;
     },
-    async me(): Promise<boolean> {
+    getSetupStatus: async () => (await request<{ needsSetup: boolean }>("GET", "/api/setup/status")).needsSetup,
+    /** Creates the first (admin) account and signs in with it. */
+    async setup(username: string, password: string): Promise<SessionUser | null> {
+      const r = await request<AuthResponse>("POST", "/api/setup", { username, password });
+      remember(r);
+      return r.user ?? null;
+    },
+    /** The signed-in user, or null when there is no session (401). */
+    async me(): Promise<{ user: SessionUser | null } | null> {
       try {
-        remember(await request<{ csrfToken: string }>("GET", "/api/auth/me"));
-        return true;
+        const r = await request<AuthResponse>("GET", "/api/auth/me");
+        remember(r);
+        return { user: r.user ?? null };
       } catch (err) {
-        if (err instanceof ApiError && err.status === 401) return false;
+        if (err instanceof ApiError && err.status === 401) return null;
         throw err;
       }
     },
@@ -106,6 +123,11 @@ export function createApiClient(options: ApiClientOptions = {}) {
     async changePassword(currentPassword: string, newPassword: string) {
       remember(await request<{ csrfToken: string }>("POST", "/api/auth/password", { currentPassword, newPassword }));
     },
+    listUsers: async () => (await request<{ users: UserRecord[] }>("GET", "/api/users")).users,
+    createUser: async (body: { username: string; password: string; role?: UserRole }) =>
+      (await request<{ user: UserRecord }>("POST", "/api/users", body)).user,
+    updateUser: (id: string, body: { role?: UserRole; password?: string }) => request<{ user?: UserRecord }>("PATCH", `/api/users/${encodeURIComponent(id)}`, body),
+    deleteUser: (id: string) => request<unknown>("DELETE", `/api/users/${encodeURIComponent(id)}`),
     getRetention: async () => (await request<{ days: number }>("GET", "/api/settings/retention")).days,
     putRetention: async (days: number) => (await request<{ days: number }>("PUT", "/api/settings/retention", { days })).days,
     listInstances: async () => (await request<{ instances: Instance[] }>("GET", "/api/instances")).instances,

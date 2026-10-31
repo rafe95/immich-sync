@@ -3,7 +3,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { SQL } from "bun";
 
-export type Session = { csrfToken: string; expiresAt: Date };
+export type Session = { csrfToken: string; expiresAt: Date; userId: string };
 
 export type SessionStore = {
   create(idHash: string, session: Session): Promise<void>;
@@ -11,8 +11,8 @@ export type SessionStore = {
   get(idHash: string, now: Date): Promise<Session | null>;
   delete(idHash: string): Promise<void>;
   purgeExpired(now: Date): Promise<void>;
-  /** Ends every session (used when the password changes). */
-  deleteAll(): Promise<void>;
+  /** Ends all of a user's sessions, except the one with `exceptIdHash` when given. */
+  deleteForUser(userId: string, exceptIdHash?: string): Promise<void>;
 };
 
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -36,8 +36,8 @@ export function memorySessionStore(): SessionStore {
     async purgeExpired(now) {
       for (const [k, s] of rows) if (s.expiresAt <= now) rows.delete(k);
     },
-    async deleteAll() {
-      rows.clear();
+    async deleteForUser(userId, exceptIdHash) {
+      for (const [k, s] of rows) if (s.userId === userId && k !== exceptIdHash) rows.delete(k);
     },
   };
 }
@@ -45,11 +45,11 @@ export function memorySessionStore(): SessionStore {
 export function pgSessionStore(sql: SQL): SessionStore {
   return {
     async create(idHash, s) {
-      await sql`insert into sessions (id_hash, csrf_token, expires_at) values (${idHash}, ${s.csrfToken}, ${s.expiresAt})`;
+      await sql`insert into sessions (id_hash, csrf_token, expires_at, user_id) values (${idHash}, ${s.csrfToken}, ${s.expiresAt}, ${s.userId})`;
     },
     async get(idHash, now) {
-      const [row] = await sql`select csrf_token, expires_at from sessions where id_hash = ${idHash} and expires_at > ${now}`;
-      return row ? { csrfToken: row.csrf_token, expiresAt: new Date(row.expires_at) } : null;
+      const [row] = await sql`select csrf_token, expires_at, user_id from sessions where id_hash = ${idHash} and expires_at > ${now}`;
+      return row ? { csrfToken: row.csrf_token, expiresAt: new Date(row.expires_at), userId: row.user_id } : null;
     },
     async delete(idHash) {
       await sql`delete from sessions where id_hash = ${idHash}`;
@@ -57,8 +57,8 @@ export function pgSessionStore(sql: SQL): SessionStore {
     async purgeExpired(now) {
       await sql`delete from sessions where expires_at <= ${now}`;
     },
-    async deleteAll() {
-      await sql`delete from sessions`;
+    async deleteForUser(userId, exceptIdHash) {
+      await sql`delete from sessions where user_id = ${userId} and id_hash is distinct from ${exceptIdHash ?? null}::text`;
     },
   };
 }

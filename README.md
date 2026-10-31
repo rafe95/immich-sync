@@ -5,7 +5,7 @@ Copy, move and sync photos and videos between Immich servers you have API keys f
 > **Status: early implementation.** Implemented today:
 >
 > - **Engine (`core`)**: read-only copy/move preview, streamed copy with target checksum verification, move (copy, verify, then source trash only), and partial metadata sync (favorites, archive/timeline visibility, descriptions, ratings, GPS, date taken, opt-in tags and additive album membership). Complete metadata sync is not implemented.
-> - **Backend**: single-admin login (server-side sessions, CSRF protection), instances API with encrypted API keys and a connection check, jobs and schedules CRUD, per-instance write locks, runs executed in the backend with stored history, structured logs and live events over SSE, and a scheduler that fires schedules in their time zone.
+> - **Backend**: first-run setup and multi-user accounts (admin and user roles; server-side sessions, CSRF protection), instances API with encrypted API keys and a connection check, jobs and schedules CRUD, per-instance write locks, runs executed in the backend with stored history, structured logs and live events over SSE, and a scheduler that fires schedules in their time zone.
 > - **Frontend**: login, Instances, a Run screen (copy, move or metadata sync, dry run on by default, live console with a per-step summary), and History with log replay and download. The Jobs screen lists saved jobs (steps, schedule, next runs, last run) with a job and batch step editor (reorder, duplicate, per-step failure options), a schedule editor (presets or cron, IANA time zone, pause, optional catch-up, explicit confirmation for jobs containing a move) and Run now / Dry run. Not verified against a live Immich or in a browser beyond the build.
 >
 > Verification: the engine, executor and scheduler are tested against a fake Immich server and fake clocks. The author has also done a first dry run and copy against real servers; move, metadata sync and scheduled runs are not yet verified on a live Immich. Treat everything as pre-release and start with dry runs.
@@ -20,7 +20,7 @@ Copy, move and sync photos and videos between Immich servers you have API keys f
 
 ```bash
 cp .env.example .env
-# fill in POSTGRES_PASSWORD, ADMIN_PASSWORD and SECRET_KEY (openssl rand -hex 32)
+# fill in POSTGRES_PASSWORD and SECRET_KEY (openssl rand -hex 32)
 bun run app:up              # or: docker compose up -d --build / podman compose up -d --build
 ```
 
@@ -28,7 +28,19 @@ Docker and Podman both work. `bun run app:up` picks the runtime automatically (D
 
 Then open http://localhost:8080.
 
-Passwords and proxies: `ADMIN_PASSWORD` is the bootstrap and recovery login. Settings > Change password (`POST /api/auth/password`, at least 12 characters) stores an argon2id hash in the `settings` table (key `admin_password_hash`) that takes precedence from then on, and signs out all other sessions. To fall back to `ADMIN_PASSWORD`, run `delete from settings where key = 'admin_password_hash';` against the database. Failed logins (and failed password confirmations) back off per client address; behind a reverse proxy every request shares the proxy's address, so set `TRUST_PROXY=true` (default `false`) to key the backoff on the first `X-Forwarded-For` hop. Enable it only when a proxy you control sets that header and the app is not reachable directly, otherwise clients can spoof it.
+### First run and accounts
+
+There is no admin password in the environment. Open the app: while no user exists you are sent to `/setup` to create the first account, which becomes an administrator; after that `/setup` is closed (`POST /api/setup` answers 409 and creates nothing). Administrators manage accounts under `/api/users` (create, change role, reset a password, delete); the `user` role can use everything except user management and the history-retention setting. The last administrator cannot be deleted or demoted, and nobody can delete their own account. Usernames are 3-64 characters (letters, digits, `.`, `_`, `-`), unique ignoring case; passwords are 12-256 characters and stored as argon2id hashes. Changing your own password (Settings, `POST /api/auth/password`) or having it reset by an administrator signs out that user's other sessions.
+
+Forgotten the only admin password? Reset it through the database. The simplest safe recovery re-opens first-run setup, which also deletes every account and ends all sessions (instances, jobs, runs and history are kept):
+
+```bash
+docker compose exec db psql -U immich_sync -d immich_sync -c 'delete from users;'   # podman compose works the same
+```
+
+Then open the app and create a new first admin at `/setup`. Do this only on a deployment you control; until you finish setup, anyone who can reach the app could claim the admin account, so keep it on localhost meanwhile.
+
+Failed logins (and failed password confirmations) back off per client address; behind a reverse proxy every request shares the proxy's address, so set `TRUST_PROXY=true` (default `false`) to key the backoff on the first `X-Forwarded-For` hop. Enable it only when a proxy you control sets that header and the app is not reachable directly, otherwise clients can spoof it. A leftover `ADMIN_PASSWORD` in an old `.env` is ignored.
 
 - The app listens on **localhost only** by default (`127.0.0.1:8080`). It holds API keys that can trash photos, so put it behind a reverse proxy with HTTPS before exposing it on a network.
 - PostgreSQL data lives in `./postgres`. No photos are stored by the app: originals are streamed from one Immich server to the other.
@@ -37,7 +49,7 @@ Passwords and proxies: `ADMIN_PASSWORD` is the bootstrap and recovery login. Set
 
 ```bash
 bun install
-cp .env.example .env        # fill in ADMIN_PASSWORD and SECRET_KEY; DATABASE_URL already points at the dev database
+cp .env.example .env        # fill in SECRET_KEY; DATABASE_URL already points at the dev database
 bun run db:up               # PostgreSQL 17 on localhost:55432 (docker-compose.dev.yml); docker or podman, see CONTAINER_RUNTIME
 bun run dev                 # backend on :8080 (auto-reload) + frontend on :5173 (proxies /api)
 ```

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { LoginRateLimiter } from "../src/auth/rate-limit.ts";
-import { clientKeyFor, createAuth, memoryPasswordStore, safeEqual } from "../src/auth/auth.ts";
+import { clientKeyFor, createAuth, safeEqual } from "../src/auth/auth.ts";
+import { memoryUserStore } from "../src/auth/users.ts";
 import { memorySessionStore } from "../src/auth/sessions.ts";
-import { loggedIn, PASSWORD, startTestServer } from "./helpers.ts";
+import { loggedIn, PASSWORD, seedUser, startTestServer, USERNAME } from "./helpers.ts";
 
 let stops: Array<() => unknown> = [];
 afterEach(() => {
@@ -14,8 +15,8 @@ function start(...args: Parameters<typeof startTestServer>) {
   stops.push(t.stop);
   return t;
 }
-const login = (base: string, password: string, headers: Record<string, string> = {}) =>
-  fetch(`${base}/api/auth/login`, { method: "POST", body: JSON.stringify({ password }), headers });
+const login = (base: string, password: string, headers: Record<string, string> = {}, username = USERNAME) =>
+  fetch(`${base}/api/auth/login`, { method: "POST", body: JSON.stringify({ username, password }), headers });
 
 describe("auth", () => {
   test("safeEqual", () => {
@@ -24,8 +25,12 @@ describe("auth", () => {
     expect(safeEqual("abc", "abcd")).toBe(false);
   });
 
-  test("fails closed without an admin password", () => {
-    expect(() => createAuth({ adminPassword: "", sessions: memorySessionStore() })).toThrow();
+  test("the environment cannot provide a login: with no users, login says setup is needed", async () => {
+    const { base } = start({ seedAdmin: false });
+    const res = await login(base, "anything at all");
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ needsSetup: true });
+    expect(res.headers.get("set-cookie")).toBeNull();
   });
 
   test("health is public; /api needs a session", async () => {
@@ -43,6 +48,12 @@ describe("auth", () => {
     expect(res.status).toBe(401);
     expect(res.headers.get("set-cookie")).toBeNull();
     expect((await login(base, "")).status).toBe(401);
+    // unknown user and wrong password look the same
+    const unknown = await login(base, PASSWORD, {}, "nobody");
+    expect(unknown.status).toBe(401);
+    expect(await unknown.json()).toEqual({ message: "Invalid username or password." });
+    // usernames are case-insensitive
+    expect((await login(base, PASSWORD, {}, "ADMIN")).status).toBe(200);
     expect((await fetch(`${base}/api/auth/login`, { method: "POST", body: "[]" })).status).toBe(400);
   });
 
@@ -58,7 +69,7 @@ describe("auth", () => {
     const cookie = setCookie.split(";")[0]!;
 
     const me = await fetch(`${base}/api/auth/me`, { headers: { cookie } });
-    expect(await me.json()).toEqual({ authenticated: true, csrfToken });
+    expect(await me.json()).toEqual({ authenticated: true, csrfToken, user: { id: expect.any(String), username: USERNAME, role: "admin" } });
 
     // logout is state-changing: needs the CSRF header
     expect((await fetch(`${base}/api/auth/logout`, { method: "POST", headers: { cookie } })).status).toBe(403);
@@ -97,8 +108,10 @@ describe("auth", () => {
   test("expired sessions are rejected", async () => {
     let now = Date.now();
     const sessions = memorySessionStore();
-    const auth = createAuth({ adminPassword: PASSWORD, sessions, now: () => new Date(now) });
-    const res = await auth.login(new Request("http://x/api/auth/login", { method: "POST", body: JSON.stringify({ password: PASSWORD }) }), "c");
+    const users = memoryUserStore();
+    await seedUser(users, USERNAME, PASSWORD, "admin");
+    const auth = createAuth({ users, sessions, now: () => new Date(now) });
+    const res = await auth.login(new Request("http://x/api/auth/login", { method: "POST", body: JSON.stringify({ username: USERNAME, password: PASSWORD }) }), "c");
     const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
     const me = () => auth.me(new Request("http://x/api/auth/me", { headers: { cookie } }) as never);
     expect((await me()).status).toBe(200);
@@ -158,27 +171,29 @@ describe("change password", () => {
   });
 
   test("rejects a wrong current password, short, equal and malformed input", async () => {
-    const passwords = memoryPasswordStore();
-    const { base } = start({ passwords });
-    const { cookie, csrfToken } = await loggedIn(base);
+    const users = memoryUserStore();
+    const { base } = start({ users });
+    const { cookie, csrfToken, user } = await loggedIn(base);
+    const before = await users.getHash(user.id);
     expect((await change(base, cookie, csrfToken, { currentPassword: "wrong", newPassword: NEW })).status).toBe(403);
     expect((await change(base, cookie, csrfToken, { currentPassword: PASSWORD, newPassword: "short" })).status).toBe(400);
     expect((await change(base, cookie, csrfToken, { currentPassword: PASSWORD, newPassword: PASSWORD })).status).toBe(400); // equal (PASSWORD is 21 chars)
     expect((await change(base, cookie, csrfToken, { currentPassword: PASSWORD })).status).toBe(400);
     expect((await fetch(`${base}/api/auth/password`, { method: "POST", headers: { cookie, "x-csrf-token": csrfToken }, body: "[]" })).status).toBe(400);
-    expect(passwords.hash).toBeNull();
+    expect(await users.getHash(user.id)).toBe(before);
     expect((await login(base, PASSWORD)).status).toBe(200); // unchanged
   });
 
   test("stores an argon2id hash, switches the credential, ends all sessions and rotates the current one", async () => {
-    const passwords = memoryPasswordStore();
-    const { base } = start({ passwords });
+    const users = memoryUserStore();
+    const { base } = start({ users });
     const a = await loggedIn(base);
     const b = await loggedIn(base);
     const res = await change(base, a.cookie, a.csrfToken, { currentPassword: PASSWORD, newPassword: NEW });
     expect(res.status).toBe(200);
-    expect(passwords.hash).toStartWith("$argon2id$");
-    expect(passwords.hash).not.toContain(NEW);
+    const stored = (await users.getHash(a.user.id))!;
+    expect(stored).toStartWith("$argon2id$");
+    expect(stored).not.toContain(NEW);
     const fresh = (await res.json()) as { csrfToken: string };
     const freshCookie = res.headers.get("set-cookie")!.split(";")[0]!;
     expect(fresh.csrfToken).not.toBe(a.csrfToken);
@@ -187,7 +202,7 @@ describe("change password", () => {
     expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: a.cookie } })).status).toBe(401);
     expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: b.cookie } })).status).toBe(401);
     expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: freshCookie } })).status).toBe(200);
-    // the stored hash now wins over ADMIN_PASSWORD
+    // the old password no longer works
     expect((await login(base, PASSWORD)).status).toBe(401);
     expect((await login(base, NEW)).status).toBe(200);
     // and the new one must differ from the (new) current
@@ -195,10 +210,26 @@ describe("change password", () => {
   });
 
   test("a corrupt stored hash fails closed", async () => {
-    const passwords = memoryPasswordStore();
-    passwords.hash = "not-a-hash";
-    const { base } = start({ passwords });
-    expect((await login(base, PASSWORD)).status).toBe(401);
+    const users = memoryUserStore();
+    await users.create("broken", "not-a-hash", "user");
+    const { base } = start({ users });
+    expect((await login(base, PASSWORD, {}, "broken")).status).toBe(401);
+  });
+
+  test("changing one user's password leaves other users' sessions alone", async () => {
+    const users = memoryUserStore();
+    const { base } = start({ users });
+    await seedUser(users, "bob", "bobs long passphrase", "user");
+    const admin = await loggedIn(base);
+    const bob = await loggedIn(base, "bob", "bobs long passphrase");
+    const bob2 = await loggedIn(base, "bob", "bobs long passphrase");
+    const res = await change(base, bob.cookie, bob.csrfToken, { currentPassword: "bobs long passphrase", newPassword: NEW });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).user.username).toBe("bob");
+    expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: bob2.cookie } })).status).toBe(401);
+    expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: admin.cookie } })).status).toBe(200);
+    expect((await login(base, NEW, {}, "bob")).status).toBe(200);
+    expect((await login(base, PASSWORD)).status).toBe(200); // admin untouched
   });
 
   test("wrong current passwords share the login backoff", async () => {

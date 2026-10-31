@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { ApiError } from "./lib/api.ts";
-  import { api } from "./lib/session.svelte.ts";
+  import { isAdmin } from "./lib/users.ts";
+  import { api, session } from "./lib/session.svelte.ts";
   import { MAX_RETENTION_DAYS, MIN_PASSWORD_LENGTH, MIN_RETENTION_DAYS, parseRetentionDays, passwordProblems } from "./lib/settings.ts";
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -46,7 +47,9 @@
       retentionError = msg(err);
     }
   }
-  onMount(loadRetention);
+  onMount(() => {
+    if (isAdmin(session.user)) loadRetention();
+  });
 
   async function saveRetention(e: SubmitEvent) {
     e.preventDefault();
@@ -100,6 +103,7 @@
     </form>
   </section>
 
+  {#if isAdmin(session.user)}
   <section class="card preset-outlined-surface-200-800 max-w-2xl space-y-3 p-4" aria-labelledby="ret-title">
     <h2 id="ret-title" class="h5">Run history</h2>
     {#if retentionError}
@@ -121,4 +125,5 @@
       </form>
     {/if}
   </section>
+  {/if}
 </div>

@@ -5,7 +5,6 @@ export type Config = {
   host: string;
   port: number;
   databaseUrl: string;
-  adminPassword: string;
   /** Encrypts stored API keys. */
   secretKey: string;
   /** Built frontend to serve; null in development (Vite serves it). */
@@ -33,9 +32,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!databaseUrl) problems.push("DATABASE_URL is required (postgres://user:password@host:5432/db).");
   else if (!/^postgres(ql)?:\/\//.test(databaseUrl)) problems.push("DATABASE_URL must start with postgres://.");
 
-  const adminPassword = get("ADMIN_PASSWORD");
-  if (!adminPassword) problems.push("ADMIN_PASSWORD is required.");
-
   const secretKey = get("SECRET_KEY");
   if (secretKey.length < MIN_SECRET_LENGTH) {
     problems.push(`SECRET_KEY must be at least ${MIN_SECRET_LENGTH} characters (try: openssl rand -hex 32).`);
@@ -55,5 +51,5 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!["true", "false"].includes(trustText)) problems.push("TRUST_PROXY must be true or false.");
 
   if (problems.length) throw new ConfigError(problems);
-  return { host, port, databaseUrl, adminPassword, secretKey, staticDir: get("STATIC_DIR") || null, cookieSecure, trustProxy: trustText === "true" };
+  return { host, port, databaseUrl, secretKey, staticDir: get("STATIC_DIR") || null, cookieSecure, trustProxy: trustText === "true" };
 }

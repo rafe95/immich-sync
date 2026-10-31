@@ -25,7 +25,7 @@ beforeAll(async () => {
     port: 0,
     staticDir,
     db: { ping: async () => up },
-    auth: { adminPassword: "pw", sessions: memorySessionStore() },
+    auth: { sessions: memorySessionStore() },
     instances: { store: instanceStore, secretKey: "k".repeat(32) },
     jobs: svc.jobs,
     runs: svc.runs,
