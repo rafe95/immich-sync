@@ -10,7 +10,7 @@ const OWNER = "99999999-9999-4999-8999-999999999999";
 
 async function setup() {
   const instances = memoryInstanceStore();
-  const mk = async (alias: string) => (await instances.create({ alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
+  const mk = async (alias: string) => (await instances.create(OWNER, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
   const [A, B, C] = [await mk("A"), await mk("B"), await mk("C")] as [string, string, string];
   const store = memoryRunStore();
   const jobs = memoryJobStore();

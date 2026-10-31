@@ -36,7 +36,7 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     OWNER = (await users.create("owner", hash, "admin")).id;
     OTHER = (await users.create("other", hash, "user")).id;
     const inst = pgInstanceStore(sql!);
-    const mk = async (alias: string) => (await inst.create({ alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("k"), note: null, isDefault: false })).id;
+    const mk = async (alias: string) => (await inst.create(OWNER, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("k"), note: null, isDefault: false })).id;
     [A, B, C] = [await mk("a"), await mk("b"), await mk("c")];
   });
 

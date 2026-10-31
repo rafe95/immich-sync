@@ -34,7 +34,7 @@ export function createDashboardRoutes(deps: DashboardDeps) {
     get: async (_req: Request, ctx: { user: { id: string } }) => {
       const at = now();
       const [instances, jobs, recent, running, stats] = await Promise.all([
-        deps.instances.list(),
+        deps.instances.list(ctx.user.id),
         deps.jobs.list(ctx.user.id),
         deps.runs.listRuns({ limit: 10, offset: 0 }),
         deps.runs.listRuns({ limit: 100, offset: 0, status: "running" }),

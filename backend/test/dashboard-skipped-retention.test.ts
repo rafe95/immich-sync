@@ -13,12 +13,13 @@ import { createRetentionPruner } from "../src/settings.ts";
 import { FakeExecutor } from "./fake-executor.ts";
 import { loggedIn, SECRET, startTestServer } from "./helpers.ts";
 
+const OWNER = "99999999-9999-4999-8999-999999999999";
 const step = (operation: StepInput["operation"], a: string, b: string): StepInput => ({
   operation, sourceId: a, targetId: b, onFailure: "continue", onError: "stop", options: { range: null, kind: "all", metadata: false, dryRun: false },
 });
 
-async function twoInstances(store: Pick<InstanceStore, "create">) {
-  const mk = async (alias: string) => (await store.create({ alias, apiUrl: `http://user:pw@${alias}.example/api`, apiKeyEnc: encryptSecret("SECRET-KEY-" + alias, SECRET), note: null, isDefault: false })).id;
+async function twoInstances(store: Pick<InstanceStore, "create">, ownerId: string) {
+  const mk = async (alias: string) => (await store.create(ownerId, { alias, apiUrl: `http://user:pw@${alias}.example/api`, apiKeyEnc: encryptSecret("SECRET-KEY-" + alias, SECRET), note: null, isDefault: false })).id;
   return [await mk("a"), await mk("b")] as [string, string];
 }
 
@@ -32,9 +33,9 @@ describe("dashboard API", () => {
   test("returns the exact shape without secrets", async () => {
     const t = startTestServer({ executor: new FakeExecutor() });
     await t.ready;
-    const [a, b] = await twoInstances(t.store);
-    await t.store.saveCheck(a, { ok: true, version: "3.3.0", versionStatus: "supported", user: { email: "x@y" }, permissions: ["all"], error: null }, new Date("2026-01-01T00:00:00Z"));
-    await t.store.saveCheck(b, { ok: false, version: null, versionStatus: null, error: { stage: "ping", message: "down" } }, new Date("2026-01-02T00:00:00Z"));
+    const [a, b] = await twoInstances(t.store, t.adminId);
+    await t.store.saveCheck(t.adminId, a, { ok: true, version: "3.3.0", versionStatus: "supported", user: { email: "x@y" }, permissions: ["all"], error: null }, new Date("2026-01-01T00:00:00Z"));
+    await t.store.saveCheck(t.adminId, b, { ok: false, version: null, versionStatus: null, error: { stage: "ping", message: "down" } }, new Date("2026-01-02T00:00:00Z"));
     const job = await t.jobStore.create(t.adminId, { name: "Nightly", steps: [step("copy", a, b)] });
     await t.jobStore.upsertSchedule(t.adminId, job.id, { cron: "0 3 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
     const paused = await t.jobStore.create(t.adminId, { name: "Paused", steps: [step("copy", a, b)] });
@@ -70,7 +71,8 @@ describe("dashboard API", () => {
   test("limits and ordering: 10 recent runs, 5 upcoming schedules, running runs", async () => {
     const ex = new FakeExecutor();
     const t = startTestServer({ executor: ex });
-    const [a, b] = await twoInstances(t.store);
+    await t.ready;
+    const [a, b] = await twoInstances(t.store, t.adminId);
     for (let i = 0; i < 7; i++) {
       const j = await t.jobStore.create(t.adminId, { name: `J${i}`, steps: [step("copy", a, b)] });
       await t.jobStore.upsertSchedule(t.adminId, j.id, { cron: `0 ${23 - i} * * *`, timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
@@ -95,11 +97,11 @@ describe("dashboard API", () => {
 describe("skipped schedule runs", () => {
   test("recordSkipped creates a finished 'skipped' schedule run with a log event and takes no lock", async () => {
     const instances = memoryInstanceStore();
-    const [a, b] = await twoInstances(instances);
+    const [a, b] = await twoInstances(instances, OWNER);
     const jobs = memoryJobStore();
     const store = memoryRunStore();
     const manager = createRunManager({ store, jobs, instances, executor: new FakeExecutor() });
-    const job = await jobs.create("99999999-9999-4999-8999-999999999999", { name: "Nightly", steps: [step("move", a, b)] });
+    const job = await jobs.create(OWNER, { name: "Nightly", steps: [step("move", a, b)] });
     const run = await manager.recordSkipped(job.id, "skipped: previous run still active");
     expect(run).toMatchObject({ status: "skipped", trigger: "schedule", startedBy: "schedule", jobId: job.id, jobName: "Nightly" });
     expect(run.finishedAt).not.toBeNull();
@@ -131,9 +133,9 @@ describe("skipped schedule runs", () => {
 describe("instance checks during runs are stored", () => {
   test("validateInstances saves a redacted last_check", async () => {
     const instances = memoryInstanceStore();
-    const [a, b] = await twoInstances(instances);
+    const [a, b] = await twoInstances(instances, OWNER);
     const ex = createCoreExecutor({
-      instances, secretKey: SECRET,
+      instances: instances.system, secretKey: SECRET,
       check: async (i) => ({
         alias: i.alias, ok: i.alias === "a", checkedAt: "2026-03-01T00:00:00.000Z", latencyMs: 1, version: i.alias === "a" ? "3.3.0" : null, versionStatus: i.alias === "a" ? "supported" : null,
         user: null, permissions: [], roles: null, warnings: [`warn ${i.apiKey}`],
@@ -145,8 +147,8 @@ describe("instance checks during runs are stored", () => {
       [{ position: 1, operation: "copy", source: { id: a, alias: "a" }, target: { id: b, alias: "b" }, options: opts, onFailure: "continue", onError: "stop" }],
       { runId: "r", signal: new AbortController().signal, log: async () => {} },
     );
-    const ra = await instances.get(a);
-    const rb = await instances.get(b);
+    const ra = await instances.get(OWNER, a);
+    const rb = await instances.get(OWNER, b);
     expect(ra!.lastCheckedAt).toBe("2026-03-01T00:00:00.000Z");
     expect((ra!.lastCheck as any).ok).toBe(true);
     expect((rb!.lastCheck as any).ok).toBe(false);
@@ -198,7 +200,7 @@ describe("progress throttling", () => {
 
   test("a run persists the last progress of each step even when throttled", async () => {
     const instances = memoryInstanceStore();
-    const [a, b] = await twoInstances(instances);
+    const [a, b] = await twoInstances(instances, OWNER);
     const store = memoryRunStore();
     const ex = new FakeExecutor();
     const orig = ex.runStep.bind(ex);
@@ -207,7 +209,7 @@ describe("progress throttling", () => {
       return orig(ctx);
     };
     const manager = createRunManager({ store, jobs: memoryJobStore(), instances, executor: ex, nowMs: () => 0 });
-    const r = await manager.start({ job: { name: "j", steps: [step("copy", a, b), step("copy", b, a)] }, trigger: "manual", ownerId: "99999999-9999-4999-8999-999999999999", startedBy: "admin", dryRun: false });
+    const r = await manager.start({ job: { name: "j", steps: [step("copy", a, b), step("copy", b, a)] }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun: false });
     await manager.whenIdle();
     const progress = store.events.filter((e) => e.runId === r.id && e.type === "progress");
     // frozen clock: the first event per step is written, the rest are held and the last one is flushed at step end

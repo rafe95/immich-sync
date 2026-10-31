@@ -59,11 +59,16 @@ export function startTestServer(overrides: {
   });
   const base = `http://127.0.0.1:${server.port}`;
   let adminId = "";
-  const ready: Promise<unknown> = overrides.seedAdmin === false ? Promise.resolve() : users.create(USERNAME, ADMIN_HASH, "admin").then((u) => void (adminId = u.id));
+  let isReady = overrides.seedAdmin === false;
+  const ready: Promise<unknown> = overrides.seedAdmin === false ? Promise.resolve() : users.create(USERNAME, ADMIN_HASH, "admin").then((u) => void ((adminId = u.id), (isReady = true)));
   return {
     server, base, users, ready,
-    /** The seeded admin's id; set once `ready` has resolved (empty when seedAdmin is false). */
-    get adminId() { return adminId; }, store, jobStore, runStore, manager: svc.manager, stop: () => server.stop(true),
+    /** The seeded admin's id; throws if read before `ready` has resolved (empty when seedAdmin is false). */
+    get adminId() {
+      if (!isReady) throw new Error("adminId read before `ready` resolved: await t.ready first.");
+      return adminId;
+    },
+    store, jobStore, runStore, manager: svc.manager, stop: () => server.stop(true),
   };
 }
 

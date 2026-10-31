@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { startFakeImmich } from "../../core/test/fake-immich.ts";
 import { decryptSecret } from "../src/crypto.ts";
-import { loggedIn, SECRET, startTestServer } from "./helpers.ts";
+import { loggedIn, SECRET, seedUser, startTestServer } from "./helpers.ts";
 
 let stops: Array<() => unknown> = [];
 afterEach(() => {
@@ -142,5 +142,47 @@ describe("instances API", () => {
     const res = await call("POST", `/api/instances/${a.id}/check`);
     expect(res.status).toBe(500);
     expect((await res.json()).message).toContain("SECRET_KEY");
+  });
+});
+
+describe("instance ownership", () => {
+  const BOB = "bobs long passphrase";
+  async function withBob() {
+    const t = await setup();
+    await seedUser(t.users, "bob", BOB, "user");
+    const bob = await loggedIn(t.base, "bob", BOB);
+    return { ...t, bob };
+  }
+
+  test("instances are private to their owner", async () => {
+    const t = await withBob();
+    const created = await (await t.call("POST", "/api/instances", body())).json();
+    expect((await (await t.bob.call("GET", "/api/instances")).json()).instances).toEqual([]);
+    const missing = await t.call("GET", `/api/instances/${crypto.randomUUID()}`);
+    expect(missing.status).toBe(404);
+    const missingBody = await missing.json();
+    const id = created.id;
+    const attempts: Array<[string, string, unknown?]> = [
+      ["GET", `/api/instances/${id}`], ["PATCH", `/api/instances/${id}`, { note: "x" }], ["DELETE", `/api/instances/${id}`], ["POST", `/api/instances/${id}/check`],
+    ];
+    for (const [method, path, payload] of attempts) {
+      const res = await t.bob.call(method, path, payload);
+      expect([method, path, res.status]).toEqual([method, path, 404]);
+      expect(await res.json()).toEqual(missingBody);
+    }
+    const still = await (await t.call("GET", `/api/instances/${id}`)).json();
+    expect(still).toMatchObject({ alias: "home", note: null });
+    expect(still.lastCheck).toBeNull();
+  });
+
+  test("two users may share an alias and each have a default", async () => {
+    const t = await withBob();
+    expect((await t.call("POST", "/api/instances", body({ isDefault: true }))).status).toBe(201);
+    expect((await t.bob.call("POST", "/api/instances", body({ isDefault: true }))).status).toBe(201);
+    const mine = (await (await t.call("GET", "/api/instances")).json()).instances;
+    expect(mine.map((i: any) => [i.alias, i.isDefault])).toEqual([["home", true]]);
+    const his = (await (await t.bob.call("GET", "/api/instances")).json()).instances;
+    expect(his.map((i: any) => [i.alias, i.isDefault])).toEqual([["home", true]]);
+    expect((await t.bob.call("POST", "/api/instances", body())).status).toBe(409);
   });
 });

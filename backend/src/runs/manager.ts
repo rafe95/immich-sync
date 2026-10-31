@@ -57,7 +57,7 @@ export function createRunManager(deps: RunManagerDeps) {
       name = req.job!.name;
       steps = req.job!.steps;
     }
-    const byId = new Map((await deps.instances.list()).map((i) => [i.id, i.alias]));
+    const byId = new Map((await deps.instances.list(req.ownerId)).map((i) => [i.id, i.alias]));
     const missing = checkStepInstances(steps, new Set(byId.keys()));
     if (missing.length) throw new HttpError(400, "Some instances no longer exist.", { problems: missing });
     const settings: RunSettings = {

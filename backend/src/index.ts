@@ -28,7 +28,7 @@ async function main() {
 
   const instanceStore = pgInstanceStore(db.sql);
   const runStore = pgRunStore(db.sql);
-  const executor = createCoreExecutor({ instances: instanceStore, secretKey: config.secretKey });
+  const executor = createCoreExecutor({ instances: instanceStore.system, secretKey: config.secretKey });
   const services = createJobRunServices({ instances: instanceStore, jobs: pgJobStore(db.sql), runs: runStore, executor });
   const interrupted = await services.manager.recoverInterrupted();
   if (interrupted.length) console.log(`Marked ${interrupted.length} run(s) from the previous process as interrupted.`);

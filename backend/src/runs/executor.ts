@@ -71,7 +71,7 @@ export const unwiredExecutor: StepExecutor = {
 // ---- core-backed executor ----
 
 export type CoreExecutorDeps = {
-  instances: Pick<InstanceStore, "get" | "getKeyEnc" | "saveCheck">;
+  instances: InstanceStore["system"];
   secretKey: string;
   /** Injectable for tests; default is core's instance check. */
   check?: (instance: Instance) => Promise<InstanceCheck>;

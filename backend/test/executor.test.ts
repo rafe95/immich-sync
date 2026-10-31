@@ -22,6 +22,7 @@ const fake = (o: Parameters<typeof startFakeImmich>[0] = {}): Fake => {
   stops.push(s.stop);
   return s;
 };
+const OWNER = "99999999-9999-4999-8999-999999999999";
 const bytes = (v: string) => new TextEncoder().encode(v);
 const asset = (id: string, content: Uint8Array): FakeAsset => ({
   id, checksum: createHash("sha1").update(content).digest("base64"), ownerId: "u-1", originalFileName: `${id}.jpg`, originalMimeType: "image/jpeg",
@@ -32,17 +33,17 @@ const mutating = (s: Fake) => s.requests.filter((r) => r.method !== "GET" && !(r
 
 async function setup(source: Fake, target: Fake, over: { sourceKey?: string } = {}) {
   const instances = memoryInstanceStore();
-  const src = await instances.create({ alias: "src", apiUrl: source.url, apiKeyEnc: encryptSecret(over.sourceKey ?? source.apiKey, SECRET), note: null, isDefault: false });
-  const dst = await instances.create({ alias: "dst", apiUrl: target.url, apiKeyEnc: encryptSecret(target.apiKey, SECRET), note: null, isDefault: false });
+  const src = await instances.create(OWNER, { alias: "src", apiUrl: source.url, apiKeyEnc: encryptSecret(over.sourceKey ?? source.apiKey, SECRET), note: null, isDefault: false });
+  const dst = await instances.create(OWNER, { alias: "dst", apiUrl: target.url, apiKeyEnc: encryptSecret(target.apiKey, SECRET), note: null, isDefault: false });
   const runs = memoryRunStore();
-  const executor = createCoreExecutor({ instances, secretKey: SECRET });
+  const executor = createCoreExecutor({ instances: instances.system, secretKey: SECRET });
   const svc = createJobRunServices({ instances, jobs: memoryJobStore(), runs, executor });
   const step = (operation: StepInput["operation"], options: Partial<StepOptions> = {}): StepInput => ({
     operation, sourceId: src.id, targetId: dst.id, onFailure: "continue", onError: "stop",
     options: { range: null, kind: "all", metadata: false, dryRun: false, ...options },
   });
   const run = async (steps: StepInput[], dryRun = false) => {
-    const started = await svc.manager.start({ job: { name: "t", steps }, trigger: "manual", ownerId: "99999999-9999-4999-8999-999999999999", startedBy: "admin", dryRun });
+    const started = await svc.manager.start({ job: { name: "t", steps }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun });
     await svc.manager.whenIdle();
     return { record: (await runs.getRun(started.id))!, events: runs.events.filter((e) => e.runId === started.id), svc };
   };
@@ -161,9 +162,9 @@ describe("core-backed executor", () => {
   test("same server and user is refused", async () => {
     const one = fake();
     const instances = memoryInstanceStore();
-    const a = await instances.create({ alias: "a", apiUrl: one.url, apiKeyEnc: encryptSecret(one.apiKey, SECRET), note: null, isDefault: false });
-    const b = await instances.create({ alias: "b", apiUrl: one.url + "/", apiKeyEnc: encryptSecret(one.apiKey, SECRET), note: null, isDefault: false });
-    const ex = createCoreExecutor({ instances, secretKey: SECRET });
+    const a = await instances.create(OWNER, { alias: "a", apiUrl: one.url, apiKeyEnc: encryptSecret(one.apiKey, SECRET), note: null, isDefault: false });
+    const b = await instances.create(OWNER, { alias: "b", apiUrl: one.url + "/", apiKeyEnc: encryptSecret(one.apiKey, SECRET), note: null, isDefault: false });
+    const ex = createCoreExecutor({ instances: instances.system, secretKey: SECRET });
     const opts = { range: null, kind: "all", metadata: false, dryRun: false } as const;
     const problems = await ex.validateInstances(
       [{ position: 1, operation: "copy", source: { id: a.id, alias: "a" }, target: { id: b.id, alias: "b" }, options: opts, onFailure: "continue", onError: "stop" }],
@@ -186,11 +187,11 @@ describe("core-backed executor", () => {
 
   test("forwards options to core and tolerates unknown event kinds", async () => {
     const instances = memoryInstanceStore();
-    const a = await instances.create({ alias: "a", apiUrl: "http://a.example/api", apiKeyEnc: encryptSecret("KEY-AAAAAA", SECRET), note: null, isDefault: false });
-    const b = await instances.create({ alias: "b", apiUrl: "http://b.example/api", apiKeyEnc: encryptSecret("KEY-BBBBBB", SECRET), note: null, isDefault: false });
+    const a = await instances.create(OWNER, { alias: "a", apiUrl: "http://a.example/api", apiKeyEnc: encryptSecret("KEY-AAAAAA", SECRET), note: null, isDefault: false });
+    const b = await instances.create(OWNER, { alias: "b", apiUrl: "http://b.example/api", apiKeyEnc: encryptSecret("KEY-BBBBBB", SECRET), note: null, isDefault: false });
     let seen: any;
     const ex = createCoreExecutor({
-      instances, secretKey: SECRET,
+      instances: instances.system, secretKey: SECRET,
       run: async (o) => {
         seen = o;
         o.onEvent?.({ type: "future-thing" } as never);

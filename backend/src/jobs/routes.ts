@@ -35,7 +35,7 @@ export function createJobRoutes(deps: JobRouteDeps) {
     if (!isUuid(id)) throw new HttpError(404, "Job not found.");
     return id;
   };
-  const aliases = async () => new Map((await deps.instances.list()).map((i) => [i.id, i.alias]));
+  const aliases = async (ownerId: string) => new Map((await deps.instances.list(ownerId)).map((i) => [i.id, i.alias]));
 
   const scheduleView = (s: ScheduleRecord | null) => {
     if (!s) return null;
@@ -53,24 +53,24 @@ export function createJobRoutes(deps: JobRouteDeps) {
     if (!job) throw new HttpError(404, "Job not found.");
     return job;
   }
-  const requireInstances = async (steps: Parameters<typeof checkStepInstances>[0]) => {
-    const problems = checkStepInstances(steps, new Set((await aliases()).keys()));
+  const requireInstances = async (ownerId: string, steps: Parameters<typeof checkStepInstances>[0]) => {
+    const problems = checkStepInstances(steps, new Set((await aliases(ownerId)).keys()));
     if (problems.length) throw new HttpError(400, "Invalid job.", { problems });
   };
 
   return {
     list: async (_req: Request, ctx: Ctx) => {
-      const names = await aliases();
+      const names = await aliases(ctx.user.id);
       return json({ jobs: (await jobs.list(ctx.user.id)).map((j) => view(j, names)) });
     },
 
-    get: async (req: Request, ctx: Ctx) => json(view(await requireJob(ctx.user.id, idOf(req)), await aliases())),
+    get: async (req: Request, ctx: Ctx) => json(view(await requireJob(ctx.user.id, idOf(req)), await aliases(ctx.user.id))),
 
     create: async (req: Request, ctx: Ctx) => {
       const input = validateJobInput(await readJsonObject(req));
-      await requireInstances(input.steps!);
+      await requireInstances(ctx.user.id, input.steps!);
       const created = await jobs.create(ctx.user.id, { name: input.name!, steps: input.steps! });
-      return json(view(created, await aliases()), 201);
+      return json(view(created, await aliases(ctx.user.id)), 201);
     },
 
     /** Partial update: `name` and/or `steps` (steps are replaced as a whole, in the given order). */
@@ -79,13 +79,13 @@ export function createJobRoutes(deps: JobRouteDeps) {
       const body = await readJsonObject(req);
       const current = await requireJob(ctx.user.id, id);
       const patch = validateJobInput(body, { partial: true });
-      if (patch.steps) await requireInstances(patch.steps);
+      if (patch.steps) await requireInstances(ctx.user.id, patch.steps);
       const updated = await jobs.update(ctx.user.id, id, patch);
       if (!updated) throw new HttpError(404, "Job not found.");
       // A schedule confirmed for a job without moves must not silently start trashing assets.
       if (patch.steps && hasMoveStep(patch.steps) && current.schedule) await jobs.revokeMoveConfirmation(ctx.user.id, id);
       deps.onSchedulesChanged?.();
-      return json(view((await jobs.get(ctx.user.id, id))!, await aliases()));
+      return json(view((await jobs.get(ctx.user.id, id))!, await aliases(ctx.user.id)));
     },
 
     remove: async (req: Request, ctx: Ctx) => {

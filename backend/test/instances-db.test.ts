@@ -46,31 +46,35 @@ describe.skipIf(!url)("sessions and instances (PostgreSQL)", () => {
 
   test("instance store: bytea round trip, alias conflict, single default, in-use delete, check jsonb", async () => {
     const store = pgInstanceStore(sql!);
+    const users = pgUserStore(sql!);
+    const owner = (await users.create("inst-owner", "x", "admin")).id;
+    const other = (await users.create("inst-other", "x", "user")).id;
     const enc = encryptSecret("KEY-A", SECRET);
-    const a = await store.create({ alias: "a", apiUrl: "http://a/api", apiKeyEnc: enc, note: null, isDefault: true });
-    expect(decryptSecret((await store.getKeyEnc(a.id))!, SECRET)).toBe("KEY-A");
-    // aliases are unique per owner now (the store has no owner until the ownership work reaches it), so own 'a' via SQL
-    const [owner] = await sql!`insert into users (username, role, password_hash) values ('alias-owner', 'admin', 'x') returning id`;
-    await sql!`update instances set owner_id = ${owner.id} where id = ${a.id}`;
-    let duplicateRejected = false;
-    try {
-      await sql!`insert into instances (alias, api_url, api_key_enc, owner_id) values ('a', 'http://x/api', ${enc}, ${owner.id})`;
-    } catch {
-      duplicateRejected = true;
-    }
-    expect(duplicateRejected).toBe(true);
-    const b = await store.create({ alias: "b", apiUrl: "http://b/api", apiKeyEnc: enc, note: "n", isDefault: true });
-    expect((await store.list()).filter((i) => i.isDefault).map((i) => i.alias)).toEqual(["b"]);
-    await store.saveCheck(b.id, { ok: true }, new Date());
-    expect((await store.get(b.id))?.lastCheck).toEqual({ ok: true });
-    const upd = await store.update(b.id, { apiUrl: "http://b2/api" });
+    const a = await store.create(owner, { alias: "a", apiUrl: "http://a/api", apiKeyEnc: enc, note: null, isDefault: true });
+    expect(decryptSecret((await store.getKeyEnc(owner, a.id))!, SECRET)).toBe("KEY-A");
+    // aliases are unique per owner: the same owner is refused, another owner may reuse the alias and keep its own default
+    await expect(store.create(owner, { alias: "a", apiUrl: "http://x/api", apiKeyEnc: enc, note: null, isDefault: false })).rejects.toBeInstanceOf(AliasTakenError);
+    const theirs = await store.create(other, { alias: "a", apiUrl: "http://x/api", apiKeyEnc: enc, note: null, isDefault: true });
+    expect((await store.get(owner, a.id))?.isDefault).toBe(true);
+    // another owner's instance behaves like a missing one
+    expect(await store.get(other, a.id)).toBeNull();
+    expect(await store.getKeyEnc(other, a.id)).toBeNull();
+    expect(await store.update(other, a.id, { note: "x" })).toBeNull();
+    expect(await store.delete(other, a.id)).toBe(false);
+    expect((await store.list(other)).map((i) => i.id)).toEqual([theirs.id]);
+    expect(decryptSecret((await store.system.getKeyEnc(a.id))!, SECRET)).toBe("KEY-A");
+    const b = await store.create(owner, { alias: "b", apiUrl: "http://b/api", apiKeyEnc: enc, note: "n", isDefault: true });
+    expect((await store.list(owner)).filter((i) => i.isDefault).map((i) => i.alias)).toEqual(["b"]);
+    await store.saveCheck(owner, b.id, { ok: true }, new Date());
+    expect((await store.get(owner, b.id))?.lastCheck).toEqual({ ok: true });
+    const upd = await store.update(owner, b.id, { apiUrl: "http://b2/api" });
     expect(upd?.lastCheck).toBeNull();
     const [job] = await sql!`insert into jobs (name) values ('j') returning id`;
     await sql!`insert into job_steps (job_id, position, operation, source_id, target_id) values (${job.id}, 1, 'copy', ${a.id}, ${b.id})`;
-    await expect(store.delete(b.id)).rejects.toBeInstanceOf(InstanceInUseError);
+    await expect(store.delete(owner, b.id)).rejects.toBeInstanceOf(InstanceInUseError);
     await sql!`delete from jobs where id = ${job.id}`;
-    expect(await store.delete(b.id)).toBe(true);
-    expect(await store.delete(b.id)).toBe(false);
+    expect(await store.delete(owner, b.id)).toBe(true);
+    expect(await store.delete(owner, b.id)).toBe(false);
   });
 
   test("full API on PostgreSQL: create, check against the fake Immich, in-use 409", async () => {

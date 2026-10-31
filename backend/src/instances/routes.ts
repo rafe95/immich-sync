@@ -5,6 +5,8 @@ import { DecryptError, decryptSecret, encryptSecret } from "../crypto.ts";
 import { HttpError, json, readJsonObject } from "../http.ts";
 import { AliasTakenError, InstanceInUseError, isUuid, type InstancePatch, type InstanceStore } from "./store.ts";
 
+type Ctx = { user: { id: string } };
+
 export type InstanceRouteDeps = {
   store: InstanceStore;
   secretKey: string;
@@ -53,22 +55,22 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
   const taken = () => new HttpError(409, "An instance with this alias already exists.");
 
   return {
-    list: async () => json({ instances: await store.list() }),
+    list: async (_req: Request, ctx: Ctx) => json({ instances: await store.list(ctx.user.id) }),
 
-    get: async (req: Request) => {
-      const found = await store.get(idOf(req as never));
+    get: async (req: Request, ctx: Ctx) => {
+      const found = await store.get(ctx.user.id, idOf(req as never));
       if (!found) throw new HttpError(404, "Instance not found.");
       return json(found);
     },
 
-    create: async (req: Request) => {
+    create: async (req: Request, ctx: Ctx) => {
       const body = await readJsonObject(req);
       const alias = str(body, "alias")?.trim() ?? "";
       const apiUrl = normalizeUrl(str(body, "apiUrl") ?? "");
       const apiKey = str(body, "apiKey")?.trim() ?? "";
       validate(alias, apiUrl, apiKey);
       try {
-        const created = await store.create({
+        const created = await store.create(ctx.user.id, {
           alias, apiUrl, apiKeyEnc: encryptSecret(apiKey, secretKey), note: note(body) ?? null, isDefault: bool(body, "isDefault") ?? false,
         });
         return json(created, 201);
@@ -78,10 +80,10 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
       }
     },
 
-    update: async (req: Request) => {
+    update: async (req: Request, ctx: Ctx) => {
       const id = idOf(req as never);
       const body = await readJsonObject(req);
-      const current = await store.get(id);
+      const current = await store.get(ctx.user.id, id);
       if (!current) throw new HttpError(404, "Instance not found.");
       const alias = str(body, "alias")?.trim();
       const apiUrl = str(body, "apiUrl") === undefined ? undefined : normalizeUrl(str(body, "apiUrl")!);
@@ -91,7 +93,7 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
       const patch: InstancePatch = { alias, apiUrl, note: note(body), isDefault: bool(body, "isDefault") };
       if (apiKey !== undefined) patch.apiKeyEnc = encryptSecret(apiKey, secretKey);
       try {
-        const updated = await store.update(id, patch);
+        const updated = await store.update(ctx.user.id, id, patch);
         if (!updated) throw new HttpError(404, "Instance not found.");
         return json(updated);
       } catch (err) {
@@ -100,10 +102,10 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
       }
     },
 
-    remove: async (req: Request) => {
+    remove: async (req: Request, ctx: Ctx) => {
       const id = idOf(req as never);
       try {
-        if (!(await store.delete(id))) throw new HttpError(404, "Instance not found.");
+        if (!(await store.delete(ctx.user.id, id))) throw new HttpError(404, "Instance not found.");
       } catch (err) {
         if (err instanceof InstanceInUseError) {
           throw new HttpError(409, "This instance is used by one or more job steps. Change or delete those jobs first.");
@@ -113,10 +115,10 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
       return json({ deleted: true });
     },
 
-    check: async (req: Request) => {
+    check: async (req: Request, ctx: Ctx) => {
       const id = idOf(req as never);
-      const record = await store.get(id);
-      const enc = await store.getKeyEnc(id);
+      const record = await store.get(ctx.user.id, id);
+      const enc = await store.getKeyEnc(ctx.user.id, id);
       if (!record || !enc) throw new HttpError(404, "Instance not found.");
       let apiKey: string;
       try {
@@ -128,7 +130,7 @@ export function createInstanceRoutes(deps: InstanceRouteDeps) {
         throw err;
       }
       const result: InstanceCheck = await runCheck({ alias: record.alias, apiUrl: record.apiUrl, apiKey });
-      await store.saveCheck(id, result, new Date(result.checkedAt));
+      await store.saveCheck(ctx.user.id, id, result, new Date(result.checkedAt));
       return json(result);
     },
   };

@@ -13,11 +13,11 @@ async function setup(opts: { heartbeatMs?: number } = {}) {
   const t = startTestServer({ executor, ...opts });
   stops.push(t.stop);
   const client = await loggedIn(t.base);
+  await t.ready;
   const mk = async (alias: string) =>
-    (await t.store.create({ alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
+    (await t.store.create(t.adminId, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
   const [A, B, C] = [await mk("A"), await mk("B"), await mk("C")] as [string, string, string];
   const job = (over: Record<string, unknown> = {}) => ({ name: "Nightly", steps: [{ operation: "copy", sourceId: A, targetId: B }], ...over });
-  await t.ready;
   return { ...t, ...client, adminId: t.adminId, executor, A, B, C, job };
 }
 
@@ -26,10 +26,12 @@ describe("run attribution", () => {
     const t = await setup();
     await seedUser(t.users, "bob", "bobs long passphrase", "user");
     const bob = await loggedIn(t.base, "bob", "bobs long passphrase");
-    const adhoc = await bob.call("POST", "/api/runs", { name: "x", steps: [{ operation: "copy", sourceId: t.A, targetId: t.B }], dryRun: true });
+    const mine = async (alias: string) => (await t.store.create(bob.user.id, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
+    const steps = [{ operation: "copy", sourceId: await mine("b1"), targetId: await mine("b2") }];
+    const adhoc = await bob.call("POST", "/api/runs", { name: "x", steps, dryRun: true });
     expect(adhoc.status).toBe(202);
     expect((await adhoc.json()).startedBy).toBe("bob");
-    const job = await (await bob.call("POST", "/api/jobs", t.job())).json();
+    const job = await (await bob.call("POST", "/api/jobs", { name: "Nightly", steps })).json();
     const saved = await bob.call("POST", `/api/jobs/${job.id}/run`, { dryRun: true });
     expect((await saved.json()).startedBy).toBe("bob");
   });
@@ -61,6 +63,27 @@ describe("job ownership", () => {
     const still = await (await t.call("GET", `/api/jobs/${id}`)).json();
     expect(still.name).toBe("Nightly");
     expect(still.schedule).not.toBeNull();
+  });
+});
+
+describe("job instance ownership", () => {
+  test("a job cannot use another user's instance", async () => {
+    const t = await setup();
+    await seedUser(t.users, "bob", "bobs long passphrase", "user");
+    const bob = await loggedIn(t.base, "bob", "bobs long passphrase");
+    const create = await bob.call("POST", "/api/jobs", t.job());
+    expect(create.status).toBe(400);
+    expect((await create.json()).problems.length).toBeGreaterThan(0);
+    // bob's own instances work, but pointing his job at the admin's is refused on update too
+    const mine = async (alias: string) => (await t.store.create(bob.user.id, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
+    const [b1, b2] = [await mine("b1"), await mine("b2")] as [string, string];
+    const job = await (await bob.call("POST", "/api/jobs", { name: "Mine", steps: [{ operation: "copy", sourceId: b1, targetId: b2 }] })).json();
+    const patch = await bob.call("PATCH", `/api/jobs/${job.id}`, { steps: [{ operation: "copy", sourceId: t.A, targetId: t.B }] });
+    expect(patch.status).toBe(400);
+    expect((await patch.json()).problems.length).toBeGreaterThan(0);
+    const adhoc = await bob.call("POST", "/api/runs", { name: "x", steps: [{ operation: "copy", sourceId: t.A, targetId: t.B }], dryRun: true });
+    expect(adhoc.status).toBe(400);
+    expect((await adhoc.json()).problems.length).toBeGreaterThan(0);
   });
 });
 
