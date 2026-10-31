@@ -89,6 +89,12 @@
     jobs = jobs.map((j) => (j.id === jobId ? { ...j, schedule: s } : j));
   }
 
+  const editSchedule = $derived.by(() => {
+    const m = mode;
+    const job = m.kind === "edit" ? m.job : null;
+    return job ? () => (mode = { kind: "schedule", jobId: job.id }) : undefined;
+  });
+
   const editingSchedule = $derived.by(() => {
     const m = mode;
     return m.kind === "schedule" ? (jobs.find((j) => j.id === m.jobId) ?? null) : null;
@@ -101,7 +107,7 @@
   {#if notice}<p class="text-sm" role="status">{notice}</p>{/if}
 
   {#if mode.kind === "edit"}
-    <JobEditor job={mode.job} {instances} onsaved={saved} oncancel={() => (mode = { kind: "list" })} />
+    <JobEditor job={mode.job} {instances} onsaved={saved} oncancel={() => (mode = { kind: "list" })} oneditschedule={editSchedule} />
   {:else if mode.kind === "schedule" && editingSchedule}
     <ScheduleEditor job={editingSchedule} onsaved={(s) => scheduleSaved(editingSchedule.id, s)} onclose={() => { mode = { kind: "list" }; void load(); }} />
   {:else if loading}
