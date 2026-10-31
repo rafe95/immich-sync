@@ -11,7 +11,7 @@ import { memoryRunStore } from "../src/runs/store.ts";
 import { ProgressThrottle } from "../src/runs/throttle.ts";
 import { createRetentionPruner } from "../src/settings.ts";
 import { FakeExecutor } from "./fake-executor.ts";
-import { loggedIn, SECRET, startTestServer } from "./helpers.ts";
+import { loggedIn, SECRET, seedUser, startTestServer } from "./helpers.ts";
 
 const OWNER = "99999999-9999-4999-8999-999999999999";
 const step = (operation: StepInput["operation"], a: string, b: string): StepInput => ({
@@ -68,6 +68,38 @@ describe("dashboard API", () => {
     t.stop();
   });
 
+  test("dashboard shows only the caller's data", async () => {
+    const t = startTestServer({ executor: new FakeExecutor() });
+    await t.ready;
+    const [a, b] = await twoInstances(t.store, t.adminId);
+    const job = await t.jobStore.create(t.adminId, { name: "Nightly", steps: [step("copy", a, b)] });
+    await t.jobStore.upsertSchedule(t.adminId, job.id, { cron: "0 3 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
+    await t.manager.start({ job: { id: job.id }, trigger: "manual", ownerId: t.adminId, startedBy: "admin", dryRun: false });
+    await t.manager.whenIdle();
+    await seedUser(t.users, "bob", "bobs long passphrase", "user");
+    const admin = await (await (await loggedIn(t.base)).call("GET", "/api/dashboard")).json();
+    expect(admin.instances).toHaveLength(2);
+    expect(admin.recentRuns).toHaveLength(1);
+    expect(admin.nextScheduled).toHaveLength(1);
+    expect(admin.stats.runsLast7Days).toBe(1);
+    const bob = await (await (await loggedIn(t.base, "bob", "bobs long passphrase")).call("GET", "/api/dashboard")).json();
+    expect(bob).toEqual({ instances: [], recentRuns: [], running: [], nextScheduled: [], stats: { runsLast7Days: 0, failedLast7Days: 0 } });
+    t.stop();
+  });
+
+  test("skipped runs carry the job owner", async () => {
+    const instances = memoryInstanceStore();
+    const [a, b] = await twoInstances(instances, OWNER);
+    const jobs = memoryJobStore();
+    const store = memoryRunStore();
+    const manager = createRunManager({ store, jobs, instances, executor: new FakeExecutor() });
+    const job = await jobs.create(OWNER, { name: "Nightly", steps: [step("copy", a, b)] });
+    const run = await manager.recordSkipped(job.id, "skipped: x");
+    expect(run.ownerId).toBe(OWNER);
+    expect((await store.getRun(OWNER, run.id))!.id).toBe(run.id);
+    expect(await store.getRun(crypto.randomUUID(), run.id)).toBeNull();
+  });
+
   test("limits and ordering: 10 recent runs, 5 upcoming schedules, running runs", async () => {
     const ex = new FakeExecutor();
     const t = startTestServer({ executor: ex });
@@ -77,7 +109,7 @@ describe("dashboard API", () => {
       const j = await t.jobStore.create(t.adminId, { name: `J${i}`, steps: [step("copy", a, b)] });
       await t.jobStore.upsertSchedule(t.adminId, j.id, { cron: `0 ${23 - i} * * *`, timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
     }
-    for (let i = 0; i < 12; i++) await t.runStore.createSkippedRun({ jobId: null, jobName: `s${i}`, settings: { jobId: null, name: "x", dryRun: false, steps: [] }, reason: "skipped: x" }, new Date());
+    for (let i = 0; i < 12; i++) await t.runStore.createSkippedRun({ ownerId: t.adminId, jobId: null, jobName: `s${i}`, settings: { jobId: null, name: "x", dryRun: false, steps: [] }, reason: "skipped: x" }, new Date());
     ex.gates.set(1, new Promise(() => {}));
     const live = await t.manager.start({ job: { name: "live", steps: [step("copy", a, b)] }, trigger: "manual", ownerId: t.adminId, startedBy: "admin", dryRun: false });
     await ex.hasStarted(1);
@@ -110,10 +142,10 @@ describe("skipped schedule runs", () => {
     expect(manager.isActive(run.id)).toBe(false);
     expect(manager.activeRunForJob(job.id)).toBeNull();
     expect(manager.locks.snapshot().held).toEqual([]);
-    expect((await store.listRuns({ limit: 10, offset: 0, status: "skipped" })).total).toBe(1);
+    expect((await store.listRuns(OWNER, { limit: 10, offset: 0, status: "skipped" })).total).toBe(1);
     // startup recovery leaves it alone
     expect(await manager.recoverInterrupted()).toEqual([]);
-    expect((await store.getRun(run.id))!.status).toBe("skipped");
+    expect((await store.getRun(OWNER, run.id))!.status).toBe("skipped");
     // retention prunes it like any finished run
     store.backdate(run.id, new Date("2020-01-01"));
     expect(await store.pruneBefore(new Date("2021-01-01"))).toBe(1);
@@ -121,7 +153,8 @@ describe("skipped schedule runs", () => {
 
   test("history filter accepts status=skipped", async () => {
     const t = startTestServer();
-    await t.runStore.createSkippedRun({ jobId: null, jobName: "n", settings: { jobId: null, name: "n", dryRun: false, steps: [] }, reason: "skipped: x" }, new Date());
+    await t.ready;
+    await t.runStore.createSkippedRun({ ownerId: t.adminId, jobId: null, jobName: "n", settings: { jobId: null, name: "n", dryRun: false, steps: [] }, reason: "skipped: x" }, new Date());
     const { call } = await loggedIn(t.base);
     const res = await (await call("GET", "/api/runs?status=skipped")).json();
     expect(res.total).toBe(1);
@@ -236,9 +269,23 @@ describe("retention", () => {
     t.stop();
   });
 
+  test("pruning removes old runs of every owner", async () => {
+    const store = memoryRunStore();
+    const settings = { jobId: null, name: "o", dryRun: false, steps: [] };
+    const ids: string[] = [];
+    for (const ownerId of [OWNER, "88888888-8888-4888-8888-888888888888"]) {
+      const r = await store.createRun({ ownerId, jobId: null, jobName: "old", trigger: "manual", startedBy: "x", dryRun: false, settings });
+      await store.finishRun(r.id, "completed", {}, new Date());
+      store.backdate(r.id, new Date(Date.now() - 100 * 86_400_000));
+      ids.push(r.id);
+    }
+    expect(await store.pruneBefore(new Date(Date.now() - 90 * 86_400_000))).toBe(2);
+    for (const id of ids) expect(await store.system.getRun(id)).toBeNull();
+  });
+
   test("pruner prunes at start and daily until stopped", async () => {
     const store = memoryRunStore();
-    const old = await store.createRun({ jobId: null, jobName: "old", trigger: "manual", startedBy: "admin", dryRun: false, settings: { jobId: null, name: "old", dryRun: false, steps: [] } });
+    const old = await store.createRun({ ownerId: OWNER, jobId: null, jobName: "old", trigger: "manual", startedBy: "admin", dryRun: false, settings: { jobId: null, name: "old", dryRun: false, steps: [] } });
     await store.finishRun(old.id, "completed", {}, new Date());
     store.backdate(old.id, new Date(Date.now() - 100 * 86_400_000));
     let now = Date.now();
@@ -257,7 +304,7 @@ describe("retention", () => {
     expect(store.runs.size).toBe(0); // pruned at startup (default 90 days)
     expect(pending).toHaveLength(1);
     expect(pending[0]!.at - now).toBe(86_400_000);
-    const fresh = await store.createRun({ jobId: null, jobName: "n", trigger: "manual", startedBy: "admin", dryRun: false, settings: { jobId: null, name: "n", dryRun: false, steps: [] } });
+    const fresh = await store.createRun({ ownerId: OWNER, jobId: null, jobName: "n", trigger: "manual", startedBy: "admin", dryRun: false, settings: { jobId: null, name: "n", dryRun: false, steps: [] } });
     await store.finishRun(fresh.id, "completed", {}, new Date());
     store.backdate(fresh.id, new Date(now - 80 * 86_400_000));
     now += 86_400_000 * 11; // the day passes: it is now 91 days old

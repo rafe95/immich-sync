@@ -45,7 +45,7 @@ async function setup(source: Fake, target: Fake, over: { sourceKey?: string } = 
   const run = async (steps: StepInput[], dryRun = false) => {
     const started = await svc.manager.start({ job: { name: "t", steps }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun });
     await svc.manager.whenIdle();
-    return { record: (await runs.getRun(started.id))!, events: runs.events.filter((e) => e.runId === started.id), svc };
+    return { record: (await runs.getRun(OWNER, started.id))!, events: runs.events.filter((e) => e.runId === started.id), svc };
   };
   return { run, step, svc, runs };
 }

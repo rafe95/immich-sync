@@ -21,12 +21,13 @@ afterAll(async () => {
   await sql.close();
 });
 
+let OWNER = "", OTHER = "";
 const step = (operation: StepInput["operation"], sourceId: string, targetId: string, over: Partial<StepInput> = {}): StepInput => ({
   operation, sourceId, targetId, onFailure: "continue", onError: "stop", options: { range: { lastDays: 7 }, kind: "photos", metadata: true, dryRun: false }, ...over,
 });
 
 describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
-  let A = "", B = "", C = "", OWNER = "", OTHER = "";
+  let A = "", B = "", C = "";
 
   test("setup: schema and instances", async () => {
     await sql!.unsafe(`create schema ${schema}`);
@@ -97,7 +98,7 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     const queued = await manager.start({ job: { id: job.id }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun: false });
     expect(queued.steps.map((s) => s.status)).toEqual(["pending", "pending"]);
     await manager.whenIdle();
-    const done = (await runs.getRun(queued.id))!;
+    const done = (await runs.getRun(OWNER, queued.id))!;
     expect(done.status).toBe("completed");
     expect(done.steps.map((s) => s.status)).toEqual(["completed", "completed"]);
     expect(done.steps[0]!.summary).toEqual({ found: 2, transferred: 2 });
@@ -115,21 +116,21 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     // pagination and filters
     for (let i = 0; i < 3; i++) await manager.start({ job: { id: job.id }, trigger: "schedule", ownerId: OWNER, startedBy: "schedule", dryRun: true });
     await manager.whenIdle();
-    const p1 = await runs.listRuns({ limit: 3, offset: 0 });
-    const p2 = await runs.listRuns({ limit: 3, offset: 3 });
+    const p1 = await runs.listRuns(OWNER, { limit: 3, offset: 0 });
+    const p2 = await runs.listRuns(OWNER, { limit: 3, offset: 3 });
     expect(p1.total).toBe(4);
     expect(p1.runs.length).toBe(3);
     expect(p2.runs.length).toBe(1);
     expect(p1.runs[0]!.steps.length).toBe(2);
-    expect((await runs.listRuns({ limit: 10, offset: 0, jobId: job.id })).total).toBe(4);
-    expect((await runs.listRuns({ limit: 10, offset: 0, status: "failed" })).total).toBe(0);
+    expect((await runs.listRuns(OWNER, { limit: 10, offset: 0, jobId: job.id })).total).toBe(4);
+    expect((await runs.listRuns(OWNER, { limit: 10, offset: 0, status: "failed" })).total).toBe(0);
 
     // recovery
-    const stuck = await runs.createRun({ jobId: job.id, jobName: "stuck", trigger: "manual", startedBy: "admin", dryRun: false, settings: done.settings });
+    const stuck = await runs.createRun({ ownerId: OWNER, jobId: job.id, jobName: "stuck", trigger: "manual", startedBy: "admin", dryRun: false, settings: done.settings });
     await runs.markRunning(stuck.id, new Date());
     await runs.updateStep(stuck.id, 1, { status: "running", startedAt: new Date() });
     expect(await manager.recoverInterrupted()).toEqual([stuck.id]);
-    const rec = (await runs.getRun(stuck.id))!;
+    const rec = (await runs.getRun(OWNER, stuck.id))!;
     expect(rec.status).toBe("interrupted");
     expect(rec.steps.map((s) => s.status)).toEqual(["error", "not_run"]);
     expect((await runs.listEvents(stuck.id, 0, 10))[0]!.message).toContain("interrupted");
@@ -140,13 +141,13 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     expect(await runs.getRetentionDays()).toBe(30);
     await sql!`update runs set created_at = now() - interval '45 days' where id = ${queued.id}`;
     expect(await pruneHistory(runs)).toBe(1);
-    expect(await runs.getRun(queued.id)).toBeNull();
+    expect(await runs.getRun(OWNER, queued.id)).toBeNull();
     expect((await sql!`select count(*)::int as n from run_events where run_id = ${queued.id}`)[0].n).toBe(0);
     expect((await sql!`select count(*)::int as n from run_steps where run_id = ${queued.id}`)[0].n).toBe(0);
 
     // deleting the job keeps history (job_id set null)
     await jobs.delete(OWNER, job.id);
-    expect((await runs.getRun(stuck.id))!.jobId).toBeNull();
+    expect((await runs.getRun(OWNER, stuck.id))!.jobId).toBeNull();
   });
 });
 
@@ -154,22 +155,40 @@ describe.skipIf(!url)("skipped runs and stats (PostgreSQL)", () => {
   test("skipped run is stored, filterable, counted out of stats, untouched by recovery, and prunable", async () => {
     const runs = pgRunStore(sql!);
     const settings = { jobId: null, name: "Nightly", dryRun: false, steps: [] };
-    const sk = await runs.createSkippedRun({ jobId: null, jobName: "Nightly", settings, reason: "skipped: previous run still active" }, new Date());
+    const sk = await runs.createSkippedRun({ ownerId: OWNER, jobId: null, jobName: "Nightly", settings, reason: "skipped: previous run still active" }, new Date());
     expect(sk).toMatchObject({ status: "skipped", trigger: "schedule", startedBy: "schedule" });
     expect(sk.finishedAt).not.toBeNull();
     expect((await runs.listEvents(sk.id, 0, 10)).map((e) => [e.level, e.message])).toEqual([["warning", "skipped: previous run still active"]]);
-    expect((await runs.listRuns({ limit: 5, offset: 0, status: "skipped" })).runs.map((r) => r.id)).toContain(sk.id);
-    const done = await runs.createRun({ jobId: null, jobName: "x", trigger: "manual", startedBy: "admin", dryRun: false, settings });
+    expect((await runs.listRuns(OWNER, { limit: 5, offset: 0, status: "skipped" })).runs.map((r) => r.id)).toContain(sk.id);
+    const done = await runs.createRun({ ownerId: OWNER, jobId: null, jobName: "x", trigger: "manual", startedBy: "admin", dryRun: false, settings });
     await runs.finishRun(done.id, "failed", {}, new Date());
-    const stats = await runs.statsSince(new Date(Date.now() - 86_400_000));
+    const stats = await runs.statsSince(OWNER, new Date(Date.now() - 86_400_000));
     expect(stats.failed).toBeGreaterThanOrEqual(1);
     const before = stats.runs;
-    await runs.createSkippedRun({ jobId: null, jobName: "Nightly", settings, reason: "skipped" }, new Date());
-    expect((await runs.statsSince(new Date(Date.now() - 86_400_000))).runs).toBe(before);
+    await runs.createSkippedRun({ ownerId: OWNER, jobId: null, jobName: "Nightly", settings, reason: "skipped" }, new Date());
+    expect((await runs.statsSince(OWNER, new Date(Date.now() - 86_400_000))).runs).toBe(before);
     expect(await runs.recoverInterrupted(new Date())).not.toContain(sk.id);
-    expect((await runs.getRun(sk.id))!.status).toBe("skipped");
+    expect((await runs.getRun(OWNER, sk.id))!.status).toBe("skipped");
     await sql!`update runs set created_at = now() - interval '200 days' where id = ${sk.id}`;
     expect(await runs.pruneBefore(new Date(Date.now() - 100 * 86_400_000))).toBeGreaterThanOrEqual(1);
-    expect(await runs.getRun(sk.id)).toBeNull();
+    expect(await runs.getRun(OWNER, sk.id)).toBeNull();
+  });
+
+  test("runs are scoped to their owner; system and pruning are global", async () => {
+    const runs = pgRunStore(sql!);
+    const settings = { jobId: null, name: "Mine", dryRun: false, steps: [] };
+    const mine = await runs.createRun({ ownerId: OWNER, jobId: null, jobName: "Mine", trigger: "manual", startedBy: "owner", dryRun: false, settings });
+    const theirs = await runs.createRun({ ownerId: OTHER, jobId: null, jobName: "Theirs", trigger: "manual", startedBy: "other", dryRun: false, settings });
+    expect([mine.ownerId, theirs.ownerId]).toEqual([OWNER, OTHER]);
+    expect(await runs.getRun(OTHER, mine.id)).toBeNull();
+    expect((await runs.getRun(OTHER, theirs.id))!.id).toBe(theirs.id);
+    expect((await runs.listRuns(OTHER, { limit: 50, offset: 0 })).runs.map((r) => r.id)).toEqual([theirs.id]);
+    expect((await runs.system.listRuns({ limit: 500, offset: 0 })).runs.map((r) => r.id)).toEqual(expect.arrayContaining([mine.id, theirs.id]));
+    expect((await runs.system.getRun(mine.id))!.ownerId).toBe(OWNER);
+    await runs.finishRun(theirs.id, "failed", {}, new Date());
+    expect((await runs.statsSince(OTHER, new Date(Date.now() - 86_400_000)))).toEqual({ runs: 1, failed: 1 });
+    await sql!`update runs set created_at = now() - interval '300 days', status = 'completed' where id in (${mine.id}, ${theirs.id})`;
+    expect(await runs.pruneBefore(new Date(Date.now() - 100 * 86_400_000))).toBeGreaterThanOrEqual(2);
+    expect(await runs.system.getRun(theirs.id)).toBeNull();
   });
 });

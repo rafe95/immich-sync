@@ -26,7 +26,7 @@ export function createJobRunServices(o: JobRunServicesOptions) {
     jobs: o.jobs,
     runs: manager,
     lastScheduledRunAt: async (jobId) => {
-      const { runs } = await o.runs.listRuns({ limit: 1, offset: 0, jobId, trigger: "schedule" });
+      const { runs } = await o.runs.system.listRuns({ limit: 1, offset: 0, jobId, trigger: "schedule" });
       return runs[0] ? new Date(runs[0].createdAt) : null;
     },
     ...o.scheduler,

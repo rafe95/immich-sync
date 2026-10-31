@@ -70,7 +70,7 @@ export function createServer(deps: ServerDeps) {
       "/api/runs/:id": { GET: p(runs.get) },
       "/api/runs/:id/cancel": { POST: p(runs.cancel) },
       "/api/runs/:id/log": { GET: p(runs.log) },
-      "/api/runs/:id/events": { GET: p((req) => runs.events(req, server)) },
+      "/api/runs/:id/events": { GET: p((req, ctx) => runs.events(req, ctx, server)) },
       "/api/dashboard": { GET: p(dashboard.get) },
       "/api/settings/retention": { GET: admin(settings.getRetention), PUT: admin(settings.putRetention) },
       "/api/*": p(() => json({ message: "Not found" }, 404)),

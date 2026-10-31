@@ -40,7 +40,7 @@ export type RunManager = ReturnType<typeof createRunManager>;
 export function createRunManager(deps: RunManagerDeps) {
   const hub = deps.hub ?? new RunEventHub();
   const locks = deps.locks ?? new InstanceLockManager();
-  const active = new Map<string, { controller: AbortController; done: Promise<RunStatus>; jobId: string | null }>();
+  const active = new Map<string, { controller: AbortController; done: Promise<RunStatus>; jobId: string | null; ownerId: string }>();
   const runnerDeps = { store: deps.store, hub, executor: deps.executor, locks, throttle: new ProgressThrottle(deps.nowMs) };
 
   async function snapshot(req: StartRequest): Promise<{ jobId: string | null; name: string; settings: RunSettings }> {
@@ -80,7 +80,7 @@ export function createRunManager(deps: RunManagerDeps) {
   function launch(run: RunRecord): void {
     const controller = new AbortController();
     const done = executeRun(runnerDeps, run.id, controller.signal).finally(() => active.delete(run.id));
-    active.set(run.id, { controller, done, jobId: run.jobId });
+    active.set(run.id, { controller, done, jobId: run.jobId, ownerId: run.ownerId });
   }
 
   return {
@@ -91,7 +91,7 @@ export function createRunManager(deps: RunManagerDeps) {
     /** Creates the run and starts it in the background; resolves as soon as it is persisted as queued. */
     async start(req: StartRequest): Promise<RunRecord> {
       const { jobId, name, settings } = await snapshot(req);
-      const run = await deps.store.createRun({ jobId, jobName: name, trigger: req.trigger, startedBy: req.startedBy, dryRun: settings.dryRun, settings });
+      const run = await deps.store.createRun({ ownerId: req.ownerId, jobId, jobName: name, trigger: req.trigger, startedBy: req.startedBy, dryRun: settings.dryRun, settings });
       launch(run);
       return run;
     },
@@ -110,7 +110,7 @@ export function createRunManager(deps: RunManagerDeps) {
         // Instances may be gone; still record the skip.
         snap = { jobId, name: job.name, settings: { jobId, name: job.name, dryRun: false, steps: [] } };
       }
-      return deps.store.createSkippedRun({ jobId: snap.jobId, jobName: snap.name, settings: snap.settings, reason }, new Date());
+      return deps.store.createSkippedRun({ ownerId: job.ownerId, jobId: snap.jobId, jobName: snap.name, settings: snap.settings, reason }, new Date());
     },
 
     /** Requests cancellation of an active run; false when it is not active in this process. */

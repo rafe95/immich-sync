@@ -66,6 +66,29 @@ describe("job ownership", () => {
   });
 });
 
+describe("run ownership", () => {
+  test("runs are private to their owner", async () => {
+    const t = await setup();
+    const started = await (await t.call("POST", "/api/runs", { name: "x", steps: [{ operation: "copy", sourceId: t.A, targetId: t.B }], dryRun: true })).json();
+    await t.manager.whenIdle();
+    await seedUser(t.users, "bob", "bobs long passphrase", "user");
+    const bob = await loggedIn(t.base, "bob", "bobs long passphrase");
+    const list = await (await bob.call("GET", "/api/runs")).json();
+    expect(list.total).toBe(0);
+    expect(list.runs).toEqual([]);
+    const missing = await bob.call("GET", `/api/runs/${crypto.randomUUID()}`);
+    const missingBody = await missing.json();
+    for (const [method, path] of [["GET", ""], ["POST", "/cancel"], ["GET", "/log"], ["GET", "/events"]] as const) {
+      const res = await bob.call(method, `/api/runs/${started.id}${path}`);
+      expect([method, path, res.status]).toEqual([method, path, 404]);
+      expect(res.headers.get("content-type")).not.toContain("text/event-stream");
+      expect(await res.json()).toEqual(missingBody);
+    }
+    expect((await (await t.call("GET", "/api/runs")).json()).total).toBe(1);
+    expect((await t.runStore.system.getRun(started.id))!.ownerId).toBe(t.adminId);
+  });
+});
+
 describe("job instance ownership", () => {
   test("a job cannot use another user's instance", async () => {
     const t = await setup();
@@ -321,6 +344,6 @@ describe("run events (SSE)", () => {
     expect(t.manager.hub.subscriberCount(run.id)).toBe(0);
     release();
     await t.manager.whenIdle();
-    expect((await t.runStore.getRun(run.id))!.status).toBe("completed");
+    expect((await t.runStore.getRun(t.adminId, run.id))!.status).toBe("completed");
   });
 });

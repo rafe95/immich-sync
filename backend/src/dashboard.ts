@@ -36,9 +36,9 @@ export function createDashboardRoutes(deps: DashboardDeps) {
       const [instances, jobs, recent, running, stats] = await Promise.all([
         deps.instances.list(ctx.user.id),
         deps.jobs.list(ctx.user.id),
-        deps.runs.listRuns({ limit: 10, offset: 0 }),
-        deps.runs.listRuns({ limit: 100, offset: 0, status: "running" }),
-        deps.runs.statsSince(new Date(at.getTime() - 7 * 86_400_000)),
+        deps.runs.listRuns(ctx.user.id, { limit: 10, offset: 0 }),
+        deps.runs.listRuns(ctx.user.id, { limit: 100, offset: 0, status: "running" }),
+        deps.runs.statsSince(ctx.user.id, new Date(at.getTime() - 7 * 86_400_000)),
       ]);
 
       const nextScheduled = jobs

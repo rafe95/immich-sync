@@ -25,7 +25,7 @@ async function setup() {
   };
   const finished = async (id: string) => {
     await manager.whenIdle();
-    return (await store.getRun(id))!;
+    return (await store.getRun(OWNER, id))!;
   };
   return { A, B, C, store, jobs, executor, manager, step, run, finished, instances };
 }
@@ -131,11 +131,11 @@ describe("run orchestration with a fake executor", () => {
     const second = await t.run([t.step("copy", t.C, t.B)]);
     const third = await t.run([t.step("copy", t.A, t.C)]);
     await Bun.sleep(10);
-    expect((await t.store.getRun(second.id))!.status).toBe("queued");
+    expect((await t.store.getRun(OWNER, second.id))!.status).toBe("queued");
     expect(t.store.events.some((e) => e.runId === second.id && e.message === "queued: waiting for B")).toBe(true);
-    expect((await t.store.getRun(third.id))!.status).not.toBe("queued");
+    expect((await t.store.getRun(OWNER, third.id))!.status).not.toBe("queued");
     await t.manager.whenIdle();
-    for (const id of [first.id, second.id, third.id]) expect((await t.store.getRun(id))!.status).toBe("completed");
+    for (const id of [first.id, second.id, third.id]) expect((await t.store.getRun(OWNER, id))!.status).toBe("completed");
     expect(t.manager.locks.snapshot()).toEqual({ held: [], waiting: [] });
   });
 
@@ -148,7 +148,7 @@ describe("run orchestration with a fake executor", () => {
     await Bun.sleep(5);
     t.manager.cancel(second.id);
     await Bun.sleep(5);
-    const r2 = (await t.store.getRun(second.id))!;
+    const r2 = (await t.store.getRun(OWNER, second.id))!;
     expect(r2.status).toBe("cancelled");
     expect(statuses(r2)).toEqual(["not_run"]);
     expect(r2.startedAt).toBeNull();
@@ -164,7 +164,7 @@ describe("run orchestration with a fake executor", () => {
     t.executor.gates.delete(1);
     const dry = await t.run([t.step("move", t.A, t.B), t.step("copy", t.B, t.C)], true);
     await Bun.sleep(20);
-    expect((await t.store.getRun(dry.id))!.status).toBe("completed");
+    expect((await t.store.getRun(OWNER, dry.id))!.status).toBe("completed");
     expect(dry.dryRun).toBe(true);
     expect(dry.settings.steps.every((s) => s.options.dryRun)).toBe(true);
     expect(t.executor.calls.filter((c) => c.kind === "step" && c.position === 2).every((c) => c.dryRun)).toBe(true);
@@ -185,7 +185,7 @@ describe("run orchestration with a fake executor", () => {
     const run = await t.manager.start({ job: { id: job.id }, trigger: "schedule", ownerId: OWNER, startedBy: "schedule", dryRun: false });
     await t.jobs.update(OWNER, job.id, { steps: [t.step("move", t.B, t.C)] });
     await t.manager.whenIdle();
-    const stored = (await t.store.getRun(run.id))!;
+    const stored = (await t.store.getRun(OWNER, run.id))!;
     expect(stored.settings.steps[0]).toMatchObject({ operation: "copy", source: { alias: "A" } });
     expect(stored).toMatchObject({ trigger: "schedule", startedBy: "schedule", jobId: job.id, jobName: "J" });
   });
@@ -196,15 +196,15 @@ describe("history", () => {
     const t = await setup();
     const done = await t.finished((await t.run([t.step("copy", t.A, t.B)])).id);
     const settings = done.settings;
-    const stuck = await t.store.createRun({ jobId: null, jobName: "stuck", trigger: "manual", startedBy: "admin", dryRun: false, settings });
+    const stuck = await t.store.createRun({ ownerId: OWNER, jobId: null, jobName: "stuck", trigger: "manual", startedBy: "admin", dryRun: false, settings });
     await t.store.markRunning(stuck.id, new Date());
     await t.store.updateStep(stuck.id, 1, { status: "running" });
     const ids = await t.manager.recoverInterrupted();
     expect(ids).toEqual([stuck.id]);
-    const r = (await t.store.getRun(stuck.id))!;
+    const r = (await t.store.getRun(OWNER, stuck.id))!;
     expect(r.status).toBe("interrupted");
     expect(statuses(r)).toEqual(["error"]);
-    expect((await t.store.getRun(done.id))!.status).toBe("completed");
+    expect((await t.store.getRun(OWNER, done.id))!.status).toBe("completed");
   });
 
   test("pagination and filters, newest first", async () => {
@@ -212,13 +212,13 @@ describe("history", () => {
     for (let i = 0; i < 5; i++) await t.finished((await t.run([t.step("copy", t.A, t.B)])).id);
     t.executor.outcomes.set(1, { status: "error" });
     await t.finished((await t.run([t.step("copy", t.A, t.B)])).id);
-    const page1 = await t.store.listRuns({ limit: 4, offset: 0 });
-    const page2 = await t.store.listRuns({ limit: 4, offset: 4 });
+    const page1 = await t.store.listRuns(OWNER, { limit: 4, offset: 0 });
+    const page2 = await t.store.listRuns(OWNER, { limit: 4, offset: 4 });
     expect(page1.total).toBe(6);
     expect(page1.runs.length).toBe(4);
     expect(page2.runs.length).toBe(2);
     expect(new Set([...page1.runs, ...page2.runs].map((r) => r.id)).size).toBe(6);
-    expect((await t.store.listRuns({ limit: 10, offset: 0, status: "failed" })).total).toBe(1);
+    expect((await t.store.listRuns(OWNER, { limit: 10, offset: 0, status: "failed" })).total).toBe(1);
   });
 
   test("retention: default 90 days, configurable, prunes finished old runs only", async () => {
@@ -228,9 +228,9 @@ describe("history", () => {
     const fresh = await t.finished((await t.run([t.step("copy", t.A, t.B)])).id);
     t.store.backdate(old.id, new Date(Date.now() - 100 * 86_400_000));
     expect(await pruneHistory(t.store)).toBe(1);
-    expect(await t.store.getRun(old.id)).toBeNull();
+    expect(await t.store.getRun(OWNER, old.id)).toBeNull();
     expect(t.store.events.some((e) => e.runId === old.id)).toBe(false);
-    expect(await t.store.getRun(fresh.id)).not.toBeNull();
+    expect(await t.store.getRun(OWNER, fresh.id)).not.toBeNull();
     await t.store.setRetentionDays(7);
     t.store.backdate(fresh.id, new Date(Date.now() - 8 * 86_400_000));
     expect(await pruneHistory(t.store)).toBe(1);

@@ -46,7 +46,7 @@ export async function executeRun(deps: RunnerDeps, runId: string, signal: AbortS
   const { store, hub, executor, locks } = deps;
   const now = deps.now ?? (() => new Date());
   const log = (level: NewEvent["level"], message: string, data?: unknown, type = "log") => emitEvent(deps, runId, { level, type, message, data });
-  const run = await store.getRun(runId);
+  const run = await store.system.getRun(runId);
   if (!run) throw new Error(`Run ${runId} not found.`);
   const steps = run.settings.steps;
   const aliasOf = new Map(steps.flatMap((s) => [[s.source.id, s.source.alias], [s.target.id, s.target.alias]] as const));
@@ -176,7 +176,7 @@ export async function executeRun(deps: RunnerDeps, runId: string, signal: AbortS
     const message = (err as Error).message || "Unexpected error.";
     try {
       await flushProgress(deps, runId);
-      for (const s of (await store.getRun(runId))?.steps ?? []) {
+      for (const s of (await store.system.getRun(runId))?.steps ?? []) {
         if (s.status === "running") await store.updateStep(runId, s.position, { status: "error", finishedAt: now() });
         else if (s.status === "pending") await store.updateStep(runId, s.position, { status: "not_run" });
       }
