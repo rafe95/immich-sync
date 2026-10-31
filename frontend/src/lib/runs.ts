@@ -33,7 +33,7 @@ export type Run = {
   trigger: string;
   dryRun: boolean;
   status: RunStatus;
-  settings: { name: string; dryRun: boolean; steps: RunStepSettings[] };
+  settings: { jobId?: string | null; name: string; dryRun: boolean; steps: RunStepSettings[] };
   summary: unknown;
   createdAt: string;
   startedAt: string | null;

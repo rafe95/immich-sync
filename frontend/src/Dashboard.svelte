@@ -2,12 +2,15 @@
   import { onMount } from "svelte";
   import { api } from "./lib/session.svelte.ts";
   import { statusLabel } from "./lib/runs.ts";
-  import { checkError, inZone, instanceHealth, refreshInterval, statusTone, type DashboardResponse } from "./lib/dashboard.ts";
+  import { checkError, inZone, instanceHealth, loadMapInput, refreshInterval, statusTone, type DashboardResponse } from "./lib/dashboard.ts";
+  import type { MapInput } from "./lib/flow/map.ts";
+  import InstanceMap from "./flow/InstanceMap.svelte";
 
   /** Optional: opens a run in the History screen. Without it, run names are shown as plain text. */
   let { onopenrun }: { onopenrun?: (runId: string) => void } = $props();
 
   let data = $state<DashboardResponse | null>(null);
+  let map = $state<MapInput | null>(null);
   let error = $state<string | null>(null);
   let loading = $state(true);
   let visible = $state(typeof document === "undefined" ? true : document.visibilityState === "visible");
@@ -18,7 +21,9 @@
 
   async function load() {
     try {
-      data = await api.request<DashboardResponse>("GET", "/api/dashboard");
+      const loaded = await loadMapInput(api);
+      data = loaded.dashboard;
+      map = loaded.map;
       error = null;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -84,6 +89,15 @@
         <div><dt class="opacity-70">Runs</dt><dd class="text-2xl">{data.stats.runsLast7Days}</dd></div>
         <div><dt class="opacity-70">With failures</dt><dd class="text-2xl {data.stats.failedLast7Days ? 'text-error-600-400' : ''}">{data.stats.failedLast7Days}</dd></div>
       </dl>
+    </section>
+
+    <section aria-labelledby="d-map" class="space-y-2">
+      <h2 id="d-map" class="h5">Instance map</h2>
+      {#if !map || map.instances.length === 0}
+        <p class="text-sm opacity-70">Add an instance to see the map.</p>
+      {:else}
+        <InstanceMap {map} {onopenrun} onchanged={load} />
+      {/if}
     </section>
 
     <section aria-labelledby="d-inst" class="space-y-2">
