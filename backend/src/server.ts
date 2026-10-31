@@ -5,6 +5,7 @@ import pkg from "../package.json" with { type: "json" };
 import { clientKeyFor, createAuth, type AuthOptions } from "./auth/auth.ts";
 import { createDashboardRoutes, type DashboardDeps } from "./dashboard.ts";
 import { createUserRoutes } from "./auth/user-routes.ts";
+import { createUserDeletion, type UserDeletionDeps } from "./auth/user-deletion.ts";
 import { json } from "./http.ts";
 import { createSettingsRoutes, type SettingsDeps } from "./settings.ts";
 import { createJobRoutes, type JobRouteDeps } from "./jobs/routes.ts";
@@ -23,13 +24,16 @@ export type ServerDeps = {
   runs: RunRouteDeps;
   dashboard: DashboardDeps;
   settings: SettingsDeps;
+  /** Deleting a user: what it needs besides the auth stores. */
+  userDeletion: Pick<UserDeletionDeps, "jobs" | "manager" | "eraser" | "timeoutMs">;
   /** Trust X-Forwarded-For for the login backoff key (TRUST_PROXY). */
   trustProxy?: boolean;
 };
 
 export function createServer(deps: ServerDeps) {
   const auth = createAuth(deps.auth);
-  const users = createUserRoutes({ users: auth.users, sessions: auth.sessions });
+  const deletion = createUserDeletion({ users: auth.users, sessions: auth.sessions, ...deps.userDeletion });
+  const users = createUserRoutes({ users: auth.users, sessions: auth.sessions, deletion, eraser: deps.userDeletion.eraser });
   const instances = createInstanceRoutes(deps.instances);
   const jobs = createJobRoutes(deps.jobs);
   const runs = createRunRoutes(deps.runs);
@@ -58,6 +62,7 @@ export function createServer(deps: ServerDeps) {
       "/api/auth/password": { POST: auth.changePassword(clientKey) },
       "/api/users": { GET: admin(users.list), POST: admin(users.create) },
       "/api/users/:id": { PATCH: admin(users.update), DELETE: admin(users.remove) },
+      "/api/users/:id/data": { GET: admin(users.data) },
       "/api/instances": { GET: p(instances.list), POST: p(instances.create) },
       "/api/instances/:id": { GET: p(instances.get), PATCH: p(instances.update), DELETE: p(instances.remove) },
       "/api/instances/:id/check": { POST: p(instances.check) },

@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { memorySessionStore } from "../src/auth/sessions.ts";
+import type { UserDataEraser } from "../src/auth/user-deletion.ts";
 import { memoryInstanceStore } from "../src/instances/store.ts";
 import { memoryJobStore } from "../src/jobs/store.ts";
 import { unwiredExecutor } from "../src/runs/executor.ts";
@@ -20,7 +21,8 @@ beforeAll(async () => {
   await writeFile(join(staticDir, "index.html"), "<html>app</html>");
   await writeFile(join(staticDir, "app.js"), "console.log(1)");
   const instanceStore = memoryInstanceStore();
-  const svc = createJobRunServices({ instances: instanceStore, jobs: memoryJobStore(), runs: memoryRunStore(), executor: unwiredExecutor, owners: { isDeleting: async () => false } });
+  const jobStore = memoryJobStore();
+  const svc = createJobRunServices({ instances: instanceStore, jobs: jobStore, runs: memoryRunStore(), executor: unwiredExecutor, owners: { isDeleting: async () => false } });
   server = createServer({
     port: 0,
     staticDir,
@@ -31,6 +33,7 @@ beforeAll(async () => {
     runs: svc.runs,
     dashboard: svc.dashboard,
     settings: svc.settings,
+    userDeletion: { jobs: jobStore, manager: svc.manager, eraser: {} as UserDataEraser }, // not exercised here
   });
   base = `http://127.0.0.1:${server.port}`;
 });

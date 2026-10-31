@@ -1,6 +1,7 @@
 import { ConfigError, loadConfig } from "./config.ts";
 import { pgUserStore } from "./auth/users.ts";
 import { pgSessionStore } from "./auth/sessions.ts";
+import { pgUserDataEraser } from "./auth/user-deletion.ts";
 import { pgInstanceStore } from "./instances/store.ts";
 import { connectDb, migrate } from "./db/index.ts";
 import { pgJobStore } from "./jobs/store.ts";
@@ -31,7 +32,8 @@ async function main() {
   const executor = createCoreExecutor({ instances: instanceStore.system, secretKey: config.secretKey });
   const userStore = pgUserStore(db.sql);
   const owners = { isDeleting: async (ownerId: string) => (await userStore.get(ownerId))?.deletingAt != null };
-  const services = createJobRunServices({ instances: instanceStore, jobs: pgJobStore(db.sql), runs: runStore, executor, owners });
+  const jobStore = pgJobStore(db.sql);
+  const services = createJobRunServices({ instances: instanceStore, jobs: jobStore, runs: runStore, executor, owners });
   const interrupted = await services.manager.recoverInterrupted();
   if (interrupted.length) console.log(`Marked ${interrupted.length} run(s) from the previous process as interrupted.`);
   const pruner = createRetentionPruner({ runs: runStore }); // prunes now, then daily
@@ -47,6 +49,7 @@ async function main() {
     runs: services.runs,
     dashboard: services.dashboard,
     settings: services.settings,
+    userDeletion: { jobs: jobStore, manager: services.manager, eraser: pgUserDataEraser(db.sql) },
     trustProxy: config.trustProxy,
   });
   await pruner.start();

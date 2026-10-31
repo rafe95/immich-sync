@@ -9,6 +9,7 @@ import { createServer, type ServerDeps } from "../src/server.ts";
 import { hashPassword } from "../src/auth/auth.ts";
 import { memoryUserStore, type Role, type UserStore } from "../src/auth/users.ts";
 import type { SessionStore } from "../src/auth/sessions.ts";
+import { memoryUserDataEraser, type MemoryEraserStores, type UserDataEraser } from "../src/auth/user-deletion.ts";
 
 export const PASSWORD = "correct horse battery";
 export const USERNAME = "admin";
@@ -31,6 +32,10 @@ export function startTestServer(overrides: {
   executor?: StepExecutor;
   heartbeatMs?: number;
   defaultTimezone?: string;
+  /** Defaults to the memory eraser over this server's stores; pass one when any of them is not a memory store. */
+  eraser?: UserDataEraser;
+  /** User deletion's bound on waiting for runs to stop. */
+  deleteTimeoutMs?: number;
 } = {}) {
   const users = overrides.users ?? memoryUserStore();
   const store = overrides.store ?? memoryInstanceStore();
@@ -56,6 +61,12 @@ export function startTestServer(overrides: {
     runs: svc.runs,
     dashboard: svc.dashboard,
     settings: svc.settings,
+    userDeletion: {
+      jobs: jobStore,
+      manager: svc.manager,
+      eraser: overrides.eraser ?? memoryUserDataEraser({ users, instances: store, jobs: jobStore, runs: runStore } as unknown as MemoryEraserStores),
+      timeoutMs: overrides.deleteTimeoutMs,
+    },
     trustProxy: overrides.trustProxy,
   });
   const base = `http://127.0.0.1:${server.port}`;

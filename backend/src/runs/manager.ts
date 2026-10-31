@@ -39,10 +39,25 @@ export type RunManagerDeps = {
 
 export type RunManager = ReturnType<typeof createRunManager>;
 
+/** True when every promise settles within `timeoutMs`; never leaves a timer behind. */
+export async function settlesWithin(promises: readonly Promise<unknown>[], timeoutMs: number): Promise<boolean> {
+  if (!promises.length) return true;
+  if (timeoutMs <= 0) return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<false>((r) => (timer = setTimeout(() => r(false), timeoutMs)));
+  try {
+    return await Promise.race([Promise.allSettled(promises).then(() => true as const), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createRunManager(deps: RunManagerDeps) {
   const hub = deps.hub ?? new RunEventHub();
   const locks = deps.locks ?? new InstanceLockManager();
   const active = new Map<string, { controller: AbortController; done: Promise<RunStatus>; jobId: string | null; ownerId: string }>();
+  /** start() calls in flight, by owner: registered before the deleting check, removed once the run is launched (or refused). */
+  const starting = new Map<string, Set<Promise<void>>>();
   const runnerDeps = { store: deps.store, hub, executor: deps.executor, locks, throttle: new ProgressThrottle(deps.nowMs) };
 
   async function snapshot(req: StartRequest): Promise<{ jobId: string | null; name: string; settings: RunSettings }> {
@@ -92,11 +107,22 @@ export function createRunManager(deps: RunManagerDeps) {
 
     /** Creates the run and starts it in the background; resolves as soon as it is persisted as queued. */
     async start(req: StartRequest): Promise<RunRecord> {
-      if (await deps.owners.isDeleting(req.ownerId)) throw new HttpError(409, "This account is being deleted.");
-      const { jobId, name, settings } = await snapshot(req);
-      const run = await deps.store.createRun({ ownerId: req.ownerId, jobId, jobName: name, trigger: req.trigger, startedBy: req.startedBy, dryRun: settings.dryRun, settings });
-      launch(run);
-      return run;
+      // Registered synchronously, before the deleting check, so user deletion can wait for a start that passed it.
+      let settle!: () => void;
+      const inFlight = new Promise<void>((r) => (settle = r));
+      const mine = starting.get(req.ownerId) ?? new Set();
+      starting.set(req.ownerId, mine.add(inFlight));
+      try {
+        if (await deps.owners.isDeleting(req.ownerId)) throw new HttpError(409, "This account is being deleted.");
+        const { jobId, name, settings } = await snapshot(req);
+        const run = await deps.store.createRun({ ownerId: req.ownerId, jobId, jobName: name, trigger: req.trigger, startedBy: req.startedBy, dryRun: settings.dryRun, settings });
+        launch(run);
+        return run;
+      } finally {
+        mine.delete(inFlight);
+        if (!mine.size && starting.get(req.ownerId) === mine) starting.delete(req.ownerId);
+        settle();
+      }
     },
 
     /**
@@ -122,6 +148,29 @@ export function createRunManager(deps: RunManagerDeps) {
       if (!entry) return false;
       entry.controller.abort();
       return true;
+    },
+
+    /**
+     * User deletion: requests cancellation of every active run (queued or running) owned by `ownerId`, through the
+     * same AbortController path as cancel(); returns their ids.
+     */
+    cancelOwner(ownerId: string): string[] {
+      const ids: string[] = [];
+      for (const [id, e] of active) {
+        if (e.ownerId !== ownerId) continue;
+        e.controller.abort();
+        ids.push(id);
+      }
+      return ids;
+    },
+
+    /** start() calls for the owner still in flight (each settles once its run is launched or refused). */
+    pendingStarts: (ownerId: string): Promise<void>[] => [...(starting.get(ownerId) ?? [])],
+
+    /** True when every listed run has finished within `timeoutMs` (runs no longer active count as finished). */
+    waitFor(runIds: string[], timeoutMs: number): Promise<boolean> {
+      const pending = runIds.map((id) => active.get(id)?.done).filter((d) => d !== undefined);
+      return settlesWithin(pending, timeoutMs);
     },
 
     isActive: (runId: string) => active.has(runId),

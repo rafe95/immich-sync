@@ -4,16 +4,22 @@ import { hashPassword, type AuthContext } from "./auth.ts";
 import { HttpError, json, readJsonObject } from "../http.ts";
 import { isUuid } from "../instances/store.ts";
 import type { SessionStore } from "./sessions.ts";
+import type { createUserDeletion, UserDataEraser } from "./user-deletion.ts";
 import { LastAdminError, normalizeUsername, passwordProblem, usernameProblem, UsernameTakenError, type Role, type UserStore } from "./users.ts";
 
-export type UserRouteDeps = { users: UserStore; sessions: SessionStore };
+export type UserRouteDeps = {
+  users: UserStore;
+  sessions: SessionStore;
+  deletion: ReturnType<typeof createUserDeletion>;
+  eraser: Pick<UserDataEraser, "counts">;
+};
 
 const parseRole = (v: unknown): Role => {
   if (v !== "admin" && v !== "user") throw new HttpError(400, "role must be 'admin' or 'user'.");
   return v;
 };
 
-export function createUserRoutes({ users, sessions }: UserRouteDeps) {
+export function createUserRoutes({ users, sessions, deletion, eraser }: UserRouteDeps) {
   const idOf = (req: Request) => {
     const id = (req as Request & { params: { id: string } }).params.id;
     if (!isUuid(id)) throw new HttpError(404, "User not found.");
@@ -59,11 +65,19 @@ export function createUserRoutes({ users, sessions }: UserRouteDeps) {
       return json({ user });
     },
 
+    /** What deleting the user would erase. */
+    data: async (req: Request) => {
+      const id = idOf(req);
+      if (!(await users.get(id))) throw new HttpError(404, "User not found.");
+      return json(await eraser.counts(id));
+    },
+
+    /** Cancels the user's runs, then erases their data; 409 (data kept, user locked out) when runs do not stop in time. */
     remove: async (req: Request, ctx: AuthContext) => {
       const id = idOf(req);
-      if (id === ctx.user.id) throw new HttpError(409, "You cannot delete your own account.");
-      if (!(await guard(() => users.delete(id)))) throw new HttpError(404, "User not found.");
-      await sessions.deleteForUser(id);
+      const result = await guard(() => deletion.remove(ctx.user.id, id));
+      if (result === "not_found") throw new HttpError(404, "User not found.");
+      if (result === "stopping") throw new HttpError(409, "Runs are still stopping. Try again.");
       return json({ deleted: true });
     },
   };

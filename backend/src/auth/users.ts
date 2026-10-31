@@ -71,7 +71,8 @@ export type UserStore = {
   markDeleting(id: string, at: Date): Promise<User | null>;
 };
 
-export function memoryUserStore(): UserStore {
+/** In-memory store for tests; `erase` is the user-deletion eraser's hook (removes the row without the last-admin rule). */
+export function memoryUserStore(): UserStore & { erase(id: string): void } {
   type Row = User & { hash: string };
   const rows = new Map<string, Row>();
   const copy = ({ hash: _h, ...u }: Row): User => ({ ...u });
@@ -85,6 +86,9 @@ export function memoryUserStore(): UserStore {
     return row;
   };
   return {
+    erase(id) {
+      rows.delete(id);
+    },
     async count() {
       return rows.size;
     },

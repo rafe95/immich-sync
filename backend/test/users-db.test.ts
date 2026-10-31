@@ -4,7 +4,12 @@ import { SQL } from "bun";
 import { hashToken, pgSessionStore } from "../src/auth/sessions.ts";
 import { LastAdminError, pgUserStore, UsernameTakenError } from "../src/auth/users.ts";
 import { migrate } from "../src/db/migrate.ts";
-import { loggedIn, startTestServer } from "./helpers.ts";
+import { pgUserDataEraser } from "../src/auth/user-deletion.ts";
+import { pgInstanceStore } from "../src/instances/store.ts";
+import { pgJobStore } from "../src/jobs/store.ts";
+import { pgRunStore } from "../src/runs/store.ts";
+import { FakeExecutor } from "./fake-executor.ts";
+import { loggedIn, seedUser, startTestServer } from "./helpers.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 const schema = `test_users_${Date.now()}`;
@@ -141,7 +146,7 @@ describe.skipIf(!url)("users (PostgreSQL)", () => {
   });
 
   test("full flow on PostgreSQL: login, create user, reset password, delete user removes sessions", async () => {
-    const t = startTestServer({ users: pgUserStore(sql!), sessions: pgSessionStore(sql!) });
+    const t = startTestServer({ users: pgUserStore(sql!), sessions: pgSessionStore(sql!), eraser: pgUserDataEraser(sql!) });
     try {
       await t.ready;
       const admin = await loggedIn(t.base);
@@ -163,6 +168,97 @@ describe.skipIf(!url)("users (PostgreSQL)", () => {
       const res = await admin.call("POST", "/api/auth/password", { currentPassword: "correct horse battery", newPassword: "yet another passphrase" });
       expect(res.status).toBe(200);
       expect((await fetch(`${t.base}/api/auth/me`, { headers: { cookie: admin.cookie } })).status).toBe(401);
+    } finally {
+      await t.stop();
+    }
+  });
+});
+
+describe.skipIf(!url)("user deletion (PostgreSQL)", () => {
+  const BOB = "bobs long passphrase";
+  const count = async (q: string, id: string) => (await sql!.unsafe(q, [id]))[0].n as number;
+  /** Every row that belongs to the owner, table by table. */
+  const rowsOf = async (id: string) => ({
+    users: await count(`select count(*)::int as n from users where id = $1`, id),
+    sessions: await count(`select count(*)::int as n from sessions where user_id = $1`, id),
+    instances: await count(`select count(*)::int as n from instances where owner_id = $1`, id),
+    jobs: await count(`select count(*)::int as n from jobs where owner_id = $1`, id),
+    jobSteps: await count(`select count(*)::int as n from job_steps where job_id in (select id from jobs where owner_id = $1)`, id),
+    schedules: await count(`select count(*)::int as n from schedules where job_id in (select id from jobs where owner_id = $1)`, id),
+    runs: await count(`select count(*)::int as n from runs where owner_id = $1`, id),
+    runSteps: await count(`select count(*)::int as n from run_steps where run_id in (select id from runs where owner_id = $1)`, id),
+    runEvents: await count(`select count(*)::int as n from run_events where run_id in (select id from runs where owner_id = $1)`, id),
+  });
+  const NONE = { users: 0, sessions: 0, instances: 0, jobs: 0, jobSteps: 0, schedules: 0, runs: 0, runSteps: 0, runEvents: 0 };
+
+  async function setup(opts: { timeoutMs?: number } = {}) {
+    await sql!.unsafe(`delete from runs; delete from jobs; delete from instances; delete from users`);
+    const executor = new FakeExecutor();
+    const users = pgUserStore(sql!);
+    const store = pgInstanceStore(sql!);
+    const t = startTestServer({
+      executor, users, sessions: pgSessionStore(sql!), store, jobStore: pgJobStore(sql!), runStore: pgRunStore(sql!),
+      eraser: pgUserDataEraser(sql!), deleteTimeoutMs: opts.timeoutMs,
+    });
+    await t.ready;
+    const bobId = (await seedUser(users, "bob", BOB, "user")).id;
+    const admin = await loggedIn(t.base);
+    const bob = await loggedIn(t.base, "bob", BOB);
+    /** A job with an enabled schedule between two of the owner's instances, and one finished dry run of it. */
+    const seed = async (client: typeof admin, ownerId: string, prefix: string) => {
+      const mk = async (alias: string) => (await store.create(ownerId, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
+      const steps = [{ operation: "copy", sourceId: await mk(`${prefix}-src`), targetId: await mk(`${prefix}-dst`) }];
+      const job = await (await client.call("POST", "/api/jobs", { name: `${prefix} nightly`, steps })).json();
+      expect((await client.call("PUT", `/api/jobs/${job.id}/schedule`, { cron: "0 3 * * *" })).status).toBe(201);
+      expect((await client.call("POST", `/api/jobs/${job.id}/run`, { dryRun: true })).status).toBe(202);
+      await t.manager.whenIdle();
+      return job;
+    };
+    return { ...t, executor, bobId, admin, bob, seed };
+  }
+
+  test("deleting a user erases only their rows; counts preview them", async () => {
+    const t = await setup();
+    try {
+      await t.seed(t.admin, t.adminId, "admin");
+      await t.seed(t.bob, t.bobId, "bob");
+      const adminBefore = await rowsOf(t.adminId);
+      expect(await rowsOf(t.bobId)).toMatchObject({ users: 1, sessions: 1, instances: 2, jobs: 1, jobSteps: 1, schedules: 1, runs: 1, runSteps: 1 });
+      expect((await rowsOf(t.bobId)).runEvents).toBeGreaterThan(0);
+      expect(await (await t.admin.call("GET", `/api/users/${t.bobId}/data`)).json()).toEqual({ instances: 2, jobs: 1, runs: 1 });
+
+      expect((await t.admin.call("DELETE", `/api/users/${t.bobId}`)).status).toBe(200);
+      expect(await rowsOf(t.bobId)).toEqual(NONE);
+      expect(await rowsOf(t.adminId)).toEqual(adminBefore);
+      expect((await fetch(`${t.base}/api/auth/login`, { method: "POST", body: JSON.stringify({ username: "bob", password: BOB }) })).status).toBe(401);
+    } finally {
+      await t.stop();
+    }
+  });
+
+  test("timeout keeps the data and locks the user out; a retry after the run stops erases it", async () => {
+    const t = await setup({ timeoutMs: 50 });
+    try {
+      const job = await t.seed(t.bob, t.bobId, "bob");
+      let release!: () => void;
+      t.executor.ignoreAbort = true;
+      t.executor.gates.set(1, new Promise<void>((r) => (release = r)));
+      expect((await t.bob.call("POST", `/api/jobs/${job.id}/run`, {})).status).toBe(202);
+      await t.executor.hasStarted(1);
+
+      const res = await t.admin.call("DELETE", `/api/users/${t.bobId}`);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ message: "Runs are still stopping. Try again." });
+      expect(await rowsOf(t.bobId)).toMatchObject({ users: 1, sessions: 0, instances: 2, jobs: 1, schedules: 1, runs: 2 });
+      const [{ enabled }] = await sql!`select enabled from schedules where job_id = ${job.id}`;
+      expect(enabled).toBe(false);
+      const [{ deleting_at }] = await sql!`select deleting_at from users where id = ${t.bobId}`;
+      expect(deleting_at).not.toBeNull();
+
+      release();
+      await t.manager.whenIdle();
+      expect((await t.admin.call("DELETE", `/api/users/${t.bobId}`)).status).toBe(200);
+      expect(await rowsOf(t.bobId)).toEqual(NONE);
     } finally {
       await t.stop();
     }

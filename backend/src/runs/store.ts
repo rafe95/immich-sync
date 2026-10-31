@@ -217,8 +217,8 @@ export function pgRunStore(sql: SQL): RunStore {
   };
 }
 
-/** In-memory store for tests. */
-export function memoryRunStore(): RunStore & { events: RunEvent[]; runs: Map<string, RunRecord>; backdate(id: string, at: Date): void } {
+/** In-memory store for tests; `eraseOwner` is the user-deletion eraser's hook (removes the owner's runs with their events). */
+export function memoryRunStore(): RunStore & { events: RunEvent[]; runs: Map<string, RunRecord>; backdate(id: string, at: Date): void; eraseOwner(ownerId: string): void } {
   const runs = new Map<string, RunRecord>();
   const events: RunEvent[] = [];
   let nextId = 1;
@@ -244,6 +244,11 @@ export function memoryRunStore(): RunStore & { events: RunEvent[]; runs: Map<str
     },
     backdate(id, at) {
       runs.get(id)!.createdAt = at.toISOString();
+    },
+    eraseOwner(ownerId) {
+      const ids = new Set([...runs.values()].filter((r) => r.ownerId === ownerId).map((r) => r.id));
+      for (const id of ids) runs.delete(id);
+      for (let i = events.length - 1; i >= 0; i--) if (ids.has(events[i]!.runId)) events.splice(i, 1);
     },
     async createRun(input) {
       const r: RunRecord = {

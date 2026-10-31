@@ -9,6 +9,10 @@ export class FakeExecutor implements StepExecutor {
   /** Steps listed here wait until released (or abort) before returning. */
   gates = new Map<number, Promise<void>>();
   started = new Map<number, () => void>();
+  /** The abort signal of every runStep call, in call order. */
+  signals: AbortSignal[] = [];
+  /** When set, a gated step waits for its gate only, as if it did not notice cancellation. */
+  ignoreAbort = false;
   private startedPromises = new Map<number, Promise<void>>();
 
   /** Resolves once the step has begun running. */
@@ -24,13 +28,15 @@ export class FakeExecutor implements StepExecutor {
 
   async runStep(ctx: StepContext): Promise<StepOutcome> {
     this.calls.push({ kind: "step", position: ctx.position, dryRun: ctx.dryRun });
+    this.signals.push(ctx.signal);
     const gate = this.gates.get(ctx.position);
     const outcome = this.outcomes.get(ctx.position);
     this.hasStarted(ctx.position);
     this.started.get(ctx.position)?.();
     await ctx.log({ level: "info", type: "progress", message: `working ${ctx.position}`, data: { done: 1, total: 2 } });
     if (gate) {
-      await Promise.race([gate, new Promise<void>((r) => (ctx.signal.aborted ? r() : ctx.signal.addEventListener("abort", () => r(), { once: true })))]);
+      if (this.ignoreAbort) await gate;
+      else await Promise.race([gate, new Promise<void>((r) => (ctx.signal.aborted ? r() : ctx.signal.addEventListener("abort", () => r(), { once: true })))]);
       if (ctx.signal.aborted && !outcome) return { status: "cancelled", summary: { transferred: 1 } };
     }
     const o = outcome ?? { status: "completed", summary: { found: 2, transferred: 2 } };

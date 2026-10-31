@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { LoginRateLimiter } from "../src/auth/rate-limit.ts";
-import { LastAdminError } from "../src/auth/users.ts";
+import { memorySessionStore } from "../src/auth/sessions.ts";
+import { createUserDeletion, memoryUserDataEraser, type UserDataEraser } from "../src/auth/user-deletion.ts";
+import { LastAdminError, memoryUserStore } from "../src/auth/users.ts";
+import { memoryInstanceStore } from "../src/instances/store.ts";
+import { memoryJobStore } from "../src/jobs/store.ts";
+import { createRunManager } from "../src/runs/manager.ts";
+import { memoryRunStore } from "../src/runs/store.ts";
+import { FakeExecutor } from "./fake-executor.ts";
 import { loggedIn, PASSWORD, seedUser, startTestServer, USERNAME } from "./helpers.ts";
 
 let stops: Array<() => unknown> = [];
@@ -258,5 +265,230 @@ describe("login", () => {
     const { base } = start({ limiter: new LoginRateLimiter({ freeAttempts: 2, baseDelayMs: 60_000 }) });
     for (const u of ["ghost1", "ghost2"]) expect((await post(base, "/api/auth/login", { username: u, password: PASSWORD })).status).toBe(401);
     expect((await post(base, "/api/auth/login", { username: USERNAME, password: PASSWORD })).status).toBe(429);
+  });
+});
+
+describe("deleting a user", () => {
+  const BOB = "bobs long passphrase";
+  async function setup(opts: { timeoutMs?: number; onErase?: (userId: string) => void } = {}) {
+    const executor = new FakeExecutor();
+    const users = memoryUserStore();
+    const store = memoryInstanceStore();
+    const jobStore = memoryJobStore();
+    const runStore = memoryRunStore();
+    const inner = memoryUserDataEraser({ users, instances: store, jobs: jobStore, runs: runStore });
+    const erased: string[] = [];
+    const eraser: UserDataEraser = {
+      counts: inner.counts,
+      erase: async (id) => {
+        opts.onErase?.(id);
+        erased.push(id);
+        await inner.erase(id);
+      },
+    };
+    const t = start({ executor, users, store, jobStore, runStore, eraser, deleteTimeoutMs: opts.timeoutMs });
+    await t.ready;
+    const bobUser = await seedUser(users, "bob", BOB, "user");
+    const admin = await loggedIn(t.base);
+    const bob = await loggedIn(t.base, "bob", BOB);
+    const mk = async (ownerId: string, alias: string) =>
+      (await store.create(ownerId, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
+    const steps = (s: string, d: string) => [{ operation: "copy", sourceId: s, targetId: d }];
+    /** An owner's job (with an enabled schedule) between two of their instances. */
+    const jobFor = async (client: Awaited<ReturnType<typeof loggedIn>>, ownerId: string, prefix: string) => {
+      const [s, d] = [await mk(ownerId, `${prefix}-src`), await mk(ownerId, `${prefix}-dst`)];
+      const job = await (await client.call("POST", "/api/jobs", { name: `${prefix} nightly`, steps: steps(s, d) })).json();
+      expect((await client.call("PUT", `/api/jobs/${job.id}/schedule`, { cron: "0 3 * * *" })).status).toBe(201);
+      return { job, s, d };
+    };
+    const login = (username: string, password: string) => post(t.base, "/api/auth/login", { username, password });
+    const ownedRuns = (ownerId: string) => [...runStore.runs.values()].filter((r) => r.ownerId === ownerId);
+    return { ...t, executor, users, store, jobStore, runStore, bobId: bobUser.id, admin, bob, jobFor, mk, steps, login, ownedRuns, erased };
+  }
+
+  test("deleting a user erases only their data", async () => {
+    const t = await setup();
+    const mine = await t.jobFor(t.admin, t.adminId, "admin");
+    const theirs = await t.jobFor(t.bob, t.bobId, "bob");
+    expect((await t.admin.call("POST", `/api/jobs/${mine.job.id}/run`, { dryRun: true })).status).toBe(202);
+    expect((await t.bob.call("POST", `/api/jobs/${theirs.job.id}/run`, { dryRun: true })).status).toBe(202);
+    await t.manager.whenIdle();
+    const bobRunIds = t.ownedRuns(t.bobId).map((r) => r.id);
+    expect(bobRunIds).toHaveLength(1);
+
+    const res = await t.admin.call("DELETE", `/api/users/${t.bobId}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: true });
+
+    expect(await t.users.get(t.bobId)).toBeNull();
+    expect(await t.store.list(t.bobId)).toEqual([]);
+    expect(await t.store.system.get(theirs.s)).toBeNull();
+    expect(await t.jobStore.list(t.bobId)).toEqual([]);
+    expect(await t.jobStore.system.get(theirs.job.id)).toBeNull();
+    expect((await t.jobStore.system.listSchedules()).map((s) => s.jobId)).toEqual([mine.job.id]);
+    expect(t.ownedRuns(t.bobId)).toEqual([]);
+    expect(t.runStore.events.filter((e) => bobRunIds.includes(e.runId))).toEqual([]);
+    // the admin's data is intact
+    expect((await t.store.list(t.adminId)).map((i) => i.id).sort()).toEqual([mine.s, mine.d].sort());
+    expect((await t.jobStore.get(t.adminId, mine.job.id))?.schedule?.enabled).toBe(true);
+    expect(t.ownedRuns(t.adminId)).toHaveLength(1);
+    expect(t.runStore.events.some((e) => e.runId === t.ownedRuns(t.adminId)[0]!.id)).toBe(true);
+    // bob is gone for good
+    expect((await t.login("bob", BOB)).status).toBe(401);
+    expect((await fetch(`${t.base}/api/auth/me`, { headers: { cookie: t.bob.cookie } })).status).toBe(401);
+    expect((await t.admin.call("DELETE", `/api/users/${t.bobId}`)).status).toBe(404);
+  });
+
+  test("deleting a user cancels their active run first", async () => {
+    let abortedAtErase: boolean[] = [];
+    const t = await setup({ onErase: () => (abortedAtErase = t.executor.signals.map((s) => s.aborted)) });
+    const theirs = await t.jobFor(t.bob, t.bobId, "bob");
+    t.executor.gates.set(1, new Promise(() => {}));
+    const run = await (await t.bob.call("POST", `/api/jobs/${theirs.job.id}/run`, {})).json();
+    await t.executor.hasStarted(1);
+    expect(t.manager.isActive(run.id)).toBe(true);
+
+    expect((await t.admin.call("DELETE", `/api/users/${t.bobId}`)).status).toBe(200);
+    expect(abortedAtErase).toEqual([true]);
+    expect(t.manager.isActive(run.id)).toBe(false);
+    expect(await t.runStore.system.getRun(run.id)).toBeNull();
+    expect(t.runStore.events.filter((e) => e.runId === run.id)).toEqual([]);
+  });
+
+  test("queued run behind another user's lock is cancelled; the other run continues", async () => {
+    const t = await setup();
+    const mine = await t.jobFor(t.admin, t.adminId, "admin");
+    const theirs = await t.jobFor(t.bob, t.bobId, "bob");
+    let release!: () => void;
+    t.executor.gates.set(1, new Promise<void>((r) => (release = r)));
+    const adminRun = await (await t.admin.call("POST", `/api/jobs/${mine.job.id}/run`, {})).json();
+    await t.executor.hasStarted(1);
+    // Instances belong to one owner, so two users' runs never share a lock through the API. Model "bob is queued
+    // behind the admin's run" by letting the admin's run also hold bob's target in the shared lock manager.
+    const held = await t.manager.locks.acquire(adminRun.id, [theirs.d]);
+    const bobRun = await (await t.bob.call("POST", `/api/jobs/${theirs.job.id}/run`, {})).json();
+    while (!t.runStore.events.some((e) => e.runId === bobRun.id && e.message?.startsWith("queued: waiting for"))) await Bun.sleep(1);
+    expect((await t.runStore.system.getRun(bobRun.id))?.status).toBe("queued");
+
+    expect((await t.admin.call("DELETE", `/api/users/${t.bobId}`)).status).toBe(200);
+    expect(t.manager.isActive(bobRun.id)).toBe(false);
+    expect(await t.runStore.system.getRun(bobRun.id)).toBeNull();
+    expect(t.executor.calls.filter((c) => c.kind === "step")).toHaveLength(1); // bob's run never reached a step
+    // the admin's run is untouched and still running
+    expect(t.manager.isActive(adminRun.id)).toBe(true);
+    expect(t.executor.signals.map((s) => s.aborted)).toEqual([false]);
+    held.release();
+    release();
+    await t.manager.whenIdle();
+    expect((await t.runStore.system.getRun(adminRun.id))?.status).toBe("completed");
+  });
+
+  test("timeout returns 409 and keeps data", async () => {
+    const t = await setup({ timeoutMs: 50 });
+    const theirs = await t.jobFor(t.bob, t.bobId, "bob");
+    let release!: () => void;
+    t.executor.ignoreAbort = true;
+    t.executor.gates.set(1, new Promise<void>((r) => (release = r)));
+    const run = await (await t.bob.call("POST", `/api/jobs/${theirs.job.id}/run`, {})).json();
+    await t.executor.hasStarted(1);
+
+    const res = await t.admin.call("DELETE", `/api/users/${t.bobId}`);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ message: "Runs are still stopping. Try again." });
+    expect(t.erased).toEqual([]);
+    expect(t.executor.signals.map((s) => s.aborted)).toEqual([true]);
+    // data kept
+    expect((await t.users.get(t.bobId))?.deletingAt).toBeTruthy();
+    expect(await t.store.list(t.bobId)).toHaveLength(2);
+    expect(await t.jobStore.list(t.bobId)).toHaveLength(1);
+    expect(await t.runStore.system.getRun(run.id)).not.toBeNull();
+    // locked out, schedules disabled, no new runs
+    expect((await t.login("bob", BOB)).status).toBe(401);
+    expect((await fetch(`${t.base}/api/auth/me`, { headers: { cookie: t.bob.cookie } })).status).toBe(401);
+    expect((await t.jobStore.system.get(theirs.job.id))?.schedule?.enabled).toBe(false);
+    await expect(t.manager.start({ job: { id: theirs.job.id }, trigger: "manual", ownerId: t.bobId, startedBy: "bob", dryRun: true })).rejects.toThrow("being deleted");
+    const listed = (await (await t.admin.call("GET", "/api/users")).json()).users.find((u: any) => u.id === t.bobId);
+    expect(listed.deletingAt).toBeTruthy();
+
+    release();
+    await t.manager.whenIdle();
+    expect((await t.runStore.system.getRun(run.id))?.status).toBe("cancelled");
+    expect((await t.admin.call("DELETE", `/api/users/${t.bobId}`)).status).toBe(200);
+    expect(t.erased).toEqual([t.bobId]);
+    expect(await t.users.get(t.bobId)).toBeNull();
+    expect(await t.store.list(t.bobId)).toEqual([]);
+    expect(await t.runStore.system.getRun(run.id)).toBeNull();
+  });
+
+  test("data preview counts", async () => {
+    const t = await setup();
+    const inst = await t.mk(t.bobId, "only");
+    // Created through the stores so the counts are exactly one each (a job through the API needs two instances).
+    const job = await t.jobStore.create(t.bobId, { name: "x", steps: [] });
+    await t.runStore.createRun({ ownerId: t.bobId, jobId: job.id, jobName: "x", trigger: "manual", startedBy: "bob", dryRun: true, settings: { jobId: job.id, name: "x", dryRun: true, steps: [] } });
+    expect(inst).toBeTruthy();
+    const res = await t.admin.call("GET", `/api/users/${t.bobId}/data`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ instances: 1, jobs: 1, runs: 1 });
+    expect(await (await t.admin.call("GET", `/api/users/${t.adminId}/data`)).json()).toEqual({ instances: 0, jobs: 0, runs: 0 });
+    expect((await t.admin.call("GET", `/api/users/${crypto.randomUUID()}/data`)).status).toBe(404);
+    expect((await t.bob.call("GET", `/api/users/${t.bobId}/data`)).status).toBe(403);
+  });
+});
+
+describe("user deletion service", () => {
+  test("a run launched between cancelling and erasing is caught", async () => {
+    const users = memoryUserStore();
+    const sessions = memorySessionStore();
+    const instances = memoryInstanceStore();
+    const jobs = memoryJobStore();
+    const runs = memoryRunStore();
+    const executor = new FakeExecutor();
+    executor.gates.set(1, new Promise(() => {}));
+    const bob = await seedUser(users, "bob", "bobs long passphrase", "user");
+    await seedUser(users, "root", "roots long passphrase", "admin");
+    const mk = async (alias: string) => (await instances.create(bob.id, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
+    const [s, d] = [await mk("s"), await mk("d")];
+    // The start's "is the owner being deleted?" answer is read before deletion begins, then held back.
+    let answered!: () => void;
+    const held = new Promise<void>((r) => (answered = r));
+    let firstCheck = true;
+    const owners = {
+      isDeleting: async (id: string) => {
+        const deleting = (await users.get(id))?.deletingAt != null;
+        if (firstCheck) {
+          firstCheck = false;
+          await held;
+        }
+        return deleting;
+      },
+    };
+    const manager = createRunManager({ store: runs, jobs, instances, executor, owners });
+    const late = manager.start({ job: { name: "late", steps: [{ operation: "copy", sourceId: s, targetId: d, options: { range: { lastDays: 1 }, kind: "photos", metadata: true, dryRun: false }, onFailure: "continue", onError: "stop" }] }, trigger: "manual", ownerId: bob.id, startedBy: "bob", dryRun: false });
+    await Bun.sleep(0);
+    let atErase: { active: string[]; statuses: string[] } | null = null;
+    const inner = memoryUserDataEraser({ users, instances, jobs, runs });
+    const deletion = createUserDeletion({
+      users, sessions, jobs, eraser: { counts: inner.counts, erase: async (id) => {
+        atErase = { active: manager.activeRunIds(), statuses: [...runs.runs.values()].map((r) => r.status) };
+        await inner.erase(id);
+      } },
+      manager: {
+        cancelOwner: (id) => {
+          const ids = manager.cancelOwner(id);
+          answered(); // the held start now proceeds and launches its run after this scan
+          return ids;
+        },
+        pendingStarts: (id) => manager.pendingStarts(id),
+        waitFor: (ids, ms) => manager.waitFor(ids, ms),
+      },
+      timeoutMs: 5_000,
+    });
+    expect(await deletion.remove("someone-else", bob.id)).toBe("deleted");
+    const run = await late;
+    // The late run was launched, found by a re-scan, cancelled and finished before anything was erased.
+    expect(atErase!).toEqual({ active: [], statuses: ["cancelled"] });
+    expect(await runs.system.getRun(run.id)).toBeNull();
+    expect(await users.get(bob.id)).toBeNull();
   });
 });

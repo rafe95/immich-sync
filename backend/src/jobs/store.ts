@@ -178,8 +178,8 @@ export function pgJobStore(sql: SQL): JobStore {
   };
 }
 
-/** In-memory store for tests. */
-export function memoryJobStore(): JobStore {
+/** In-memory store for tests; `eraseOwner` is the user-deletion eraser's hook (removes the owner's jobs with their steps and schedules). */
+export function memoryJobStore(): JobStore & { eraseOwner(ownerId: string): void } {
   const jobs = new Map<string, JobRecord>();
   const stamp = () => new Date().toISOString();
   const withSteps = (steps: StepInput[]): StepRecord[] => steps.map((s, i) => ({ ...structuredClone(s), id: crypto.randomUUID(), position: i + 1 }));
@@ -190,6 +190,9 @@ export function memoryJobStore(): JobStore {
     return j && j.ownerId === ownerId ? j : undefined;
   };
   return {
+    eraseOwner(ownerId) {
+      for (const j of [...jobs.values()]) if (j.ownerId === ownerId) jobs.delete(j.id);
+    },
     async list(ownerId) {
       return [...jobs.values()].filter((j) => j.ownerId === ownerId).sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())).map(copy);
     },

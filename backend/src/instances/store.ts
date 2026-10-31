@@ -154,8 +154,8 @@ export function pgInstanceStore(sql: SQL): InstanceStore {
   };
 }
 
-/** In-memory store for tests; `usedByJobs` simulates job_steps references. */
-export function memoryInstanceStore(): InstanceStore & { keys: Map<string, Buffer>; usedByJobs: Set<string> } {
+/** In-memory store for tests; `usedByJobs` simulates job_steps references; `eraseOwner` is the user-deletion eraser's hook. */
+export function memoryInstanceStore(): InstanceStore & { keys: Map<string, Buffer>; usedByJobs: Set<string>; eraseOwner(ownerId: string): void } {
   const rows = new Map<string, InstanceRecord>();
   const keys = new Map<string, Buffer>();
   const usedByJobs = new Set<string>();
@@ -178,6 +178,14 @@ export function memoryInstanceStore(): InstanceStore & { keys: Map<string, Buffe
   return {
     keys,
     usedByJobs,
+    eraseOwner(ownerId) {
+      for (const r of [...rows.values()]) {
+        if (r.ownerId !== ownerId) continue;
+        rows.delete(r.id);
+        keys.delete(r.id);
+        usedByJobs.delete(r.id);
+      }
+    },
     async list(ownerId) {
       return [...rows.values()].filter((r) => r.ownerId === ownerId).sort((a, b) => a.alias.localeCompare(b.alias)).map((r) => ({ ...r }));
     },
