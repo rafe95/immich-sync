@@ -152,7 +152,7 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
       if (!authed(req)) return unauthorized();
 
       if (req.method === "POST" && path === "/api/search/metadata" && options.rejectSearchWith) {
-        return json({ message: [options.rejectSearchWith], error: "Bad Request", statusCode: 400 }, 400);
+        return json({ message: "Validation failed", errors: [{ path: ["filter"], message: options.rejectSearchWith }], statusCode: 400 }, 400);
       }
       if (req.method === "POST" && path === "/api/search/metadata") {
         const search = body as {

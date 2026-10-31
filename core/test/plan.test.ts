@@ -137,7 +137,7 @@ describe("planTransfer", () => {
     const target = fake();
 
     await expect(planTransfer(options(source, target))).rejects.toThrow(
-      "Source asset discovery failed for source (HTTP 400: filter.takenAt must be a valid date).",
+      "Source asset discovery failed for source (HTTP 400: Validation failed [{\"path\":[\"filter\"],\"message\":\"filter.takenAt must be a valid date\"}]).",
     );
   });
 
