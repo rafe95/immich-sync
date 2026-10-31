@@ -13,6 +13,7 @@ RUN bun run build
 FROM oven/bun:1.4.2-alpine
 WORKDIR /app
 ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
     PORT=8080 \
     STATIC_DIR=/app/frontend/dist
 COPY package.json bun.lock ./
@@ -23,6 +24,8 @@ RUN bun install --frozen-lockfile --production
 COPY core/src core/src
 COPY backend/src backend/src
 COPY --from=build /app/frontend/dist frontend/dist
+# Sources copied from a host with restrictive permissions (e.g. 600) must stay readable by the non-root user.
+RUN chmod -R a+rX /app
 USER bun
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

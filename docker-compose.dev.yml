@@ -1,5 +1,8 @@
 # Development database only (the app runs with `bun run dev`).
 # bun run db:up / bun run db:down
+# Own project name so this never collides with the production stack in docker-compose.yml.
+name: immich-sync-dev
+
 services:
   db:
     image: postgres:17-alpine
@@ -8,7 +11,7 @@ services:
       POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: immich_sync
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:55432:5432" # not 5432: that port is commonly taken by other local PostgreSQL containers
     volumes:
       - immich-sync-dev-db:/var/lib/postgresql/data
     healthcheck:

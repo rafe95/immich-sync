@@ -2,7 +2,7 @@
 
 ## Project status and sources of truth
 
-- This repository has moved from the phase-0 scaffold into an early phase-1 implementation. The workspace, database schema, health endpoint, Immich instance checks, fake Immich server, frontend shell, read-only copy/move preview, core-only streamed copy with target checksum verification, and selected-asset partial metadata-field sync exist. The metadata operation supports favorites, timeline/archive visibility, nonempty descriptions, ratings, complete GPS pairs, and opt-in additive owned-album membership matched by exact name. Full metadata sync, move execution/source trash, jobs, scheduling, authentication, and the full UI are not implemented yet. Do not describe planned behavior as existing functionality.
+- This repository has moved from the phase-0 scaffold into an early phase-1 implementation. The workspace, database schema, health endpoint, Immich instance checks, fake Immich server, frontend shell, read-only copy/move preview, core-only streamed copy with target checksum verification, core-only move execution (`moveAssets`), and selected-asset partial metadata-field sync exist. The metadata operation supports favorites, timeline/archive visibility, nonempty descriptions, ratings, complete GPS pairs, date taken with a resolvable time zone offset, opt-in tags (matched by exact value, created on the target if missing, additive), and opt-in additive owned-album membership matched by exact name (creating missing albums is a separate opt-in). Full metadata sync, backend/UI integration of move, jobs, scheduling, and the full UI are not implemented yet. Backend single-admin authentication (PostgreSQL sessions, CSRF), the instances API (encrypted keys, connection check), jobs/schedules CRUD, per-instance write locks, a run store with history/retention and SSE events, and run orchestration around an injected `StepExecutor` exist, but that executor is not yet wired to `core` and nothing fires schedules, so real runs fail at validation; the frontend is not wired to them. Do not describe planned behavior as existing functionality.
 - `SPEC.md` is the product specification. Follow its goals, safety rules, and out-of-scope list; `README.md` documents current implementation, supported commands, and the roadmap. If implementation reality and the specification differ, preserve the distinction and update the relevant docs when behavior changes.
 - Implement incrementally in the existing packages. Avoid introducing unrelated infrastructure or replacing the selected stack without an explicit requirement.
 
@@ -12,7 +12,7 @@ This is a Bun workspace with `core`, `backend`, and `frontend` packages. From th
 
 ```bash
 bun install
-bun run db:up
+bun run db:up              # docker or podman: CONTAINER_RUNTIME=docker|podman|auto, see scripts/compose.sh
 bun run dev
 bun test
 bun run typecheck
@@ -21,7 +21,7 @@ bun run db:down
 ```
 
 - `bun run dev` starts the backend on port 8080 and the Vite frontend on port 5173; the frontend proxies `/api` to the backend.
-- Database integration tests run only when `TEST_DATABASE_URL` is set. For the development database, use `TEST_DATABASE_URL=postgres://immich_sync:devpassword@localhost:5432/immich_sync bun test`.
+- Database integration tests run only when `TEST_DATABASE_URL` is set. For the development database, use `TEST_DATABASE_URL=postgres://immich_sync:devpassword@localhost:55432/immich_sync bun test`.
 - `bun run build` builds the frontend into `frontend/dist`; `bun run start` starts the backend and serves that build when `STATIC_DIR` is set.
 - For deployment, use Docker Compose as documented in `README.md`. The app should bind to localhost by default; network exposure requires HTTPS and a reverse proxy.
 
@@ -29,8 +29,8 @@ Run focused tests for changed behavior, then `bun test` and `bun run typecheck` 
 
 ## Package boundaries and conventions
 
-- `core/`: pure TypeScript engine code using the official `@immich/sdk`; keep HTTP server, database, and UI concerns out of this package. The copy/move planner is read-only; `copyAssets` supports copy-only execution with streamed originals and target checksum verification, with metadata sync explicitly disabled. `syncMetadataFields` is a selected-asset building block limited to favorites, timeline/archive visibility, nonempty descriptions, ratings, complete GPS pairs, and opt-in additive owned-album membership matched by exact name; full metadata sync, move/source-trash, backend job ownership, and UI integration are not implemented.
-- `backend/`: Bun HTTP/API server, PostgreSQL access through `Bun.sql`, SQL migrations, and (as implemented) execution, scheduling, authentication, and log streaming. The backend owns job execution; browser lifetime must not control a run.
+- `core/`: pure TypeScript engine code using the official `@immich/sdk`; keep HTTP server, database, and UI concerns out of this package. The copy/move planner is read-only; `copyAssets` supports copy-only execution with streamed originals and target checksum verification, with metadata sync explicitly disabled. `syncMetadataFields` is a selected-asset building block limited to favorites, timeline/archive visibility, nonempty descriptions, ratings, complete GPS pairs, date taken with a resolvable time zone offset, opt-in tags (matched by exact value, created on the target if missing, additive), and opt-in additive owned-album membership matched by exact name (creating missing albums is a separate opt-in); `moveAssets` copies, then trashes (never force-deletes) on the source only assets verified on the target by checksum and, when enabled, successfully metadata-synced via `syncMetadataFields`; `runStep` (`core/src/step.ts`) is the single step entry point for copy, move and `sync_metadata` (assets already on both sides, never uploads); it waits (bounded, abortable, injectable delay) for the target's `exifInfo` before metadata sync and reports a timeout as a metadata failure so a move does not trash the asset; `runStep` delivers asset and typed `progress` events live through `onEvent` (copyAssets/moveAssets/syncMetadataFields take optional `onAsset`/`onProgress`; `result.events` stays complete and ordered), and `sync_metadata` planning requires only metadata-sync permissions (source read; target read + `asset.update`; album/tag permissions only for enabled options), not `asset.upload`; full metadata sync, backend job ownership, and UI integration are not implemented.
+- `backend/`: Bun HTTP/API server, PostgreSQL access through `Bun.sql`, SQL migrations, and (as implemented) execution, scheduling, authentication, and log streaming. The backend owns job execution; browser lifetime must not control a run. `createCoreExecutor` (runs/executor.ts) runs steps through core's `runStep`, and `scheduler.ts` fires schedules through the run manager; both are verified only with the fake Immich server and fake clocks, not a live Immich.
 - `frontend/`: Svelte 5 + Vite + Skeleton (Tailwind 4). Follow existing Svelte 5 patterns, including runes where used, and keep Immich API credentials and direct Immich traffic out of the browser.
 - Follow the surrounding TypeScript style, package boundaries, and existing APIs. Prefer small, typed changes and update tests and documentation alongside behavior changes.
 - Database migrations are plain SQL files named `NNNN_description.sql`, applied in name order and each in its own transaction. Add a new migration for schema changes; do not silently rewrite an already-applied migration.

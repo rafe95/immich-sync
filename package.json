@@ -9,8 +9,15 @@
     "start": "bun run --filter @immich-sync/backend start",
     "test": "bun test",
     "typecheck": "bun run --filter '*' typecheck",
-    "db:up": "docker compose -f docker-compose.dev.yml up -d",
-    "db:down": "docker compose -f docker-compose.dev.yml down"
+    "db:up": "sh scripts/compose.sh dev up -d",
+    "db:down": "sh scripts/compose.sh dev down",
+    "db:up:docker": "CONTAINER_RUNTIME=docker sh scripts/compose.sh dev up -d",
+    "db:up:podman": "CONTAINER_RUNTIME=podman sh scripts/compose.sh dev up -d",
+    "app:up": "sh scripts/compose.sh prod up -d --build",
+    "app:down": "sh scripts/compose.sh prod down",
+    "app:logs": "sh scripts/compose.sh prod logs -f app",
+    "app:up:docker": "CONTAINER_RUNTIME=docker sh scripts/compose.sh prod up -d --build",
+    "app:up:podman": "CONTAINER_RUNTIME=podman sh scripts/compose.sh prod up -d --build"
   },
   "devDependencies": {
     "@types/bun": "1.4.3",
