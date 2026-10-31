@@ -56,3 +56,31 @@ export function checkRole(granted: readonly string[], role: Role): RoleCheck {
 export function checkAllRoles(granted: readonly string[]): Record<Role, RoleCheck> {
   return Object.fromEntries(ROLES.map((r) => [r, checkRole(granted, r)])) as Record<Role, RoleCheck>;
 }
+
+export type MetadataSyncFlags = {
+  includeAlbums?: boolean;
+  createMissingAlbums?: boolean;
+  includeTags?: boolean;
+};
+
+/**
+ * Permissions needed by a standalone metadata sync (no upload, no download): read on the source;
+ * read + asset.update on the target; album/tag permissions only when those options are on.
+ * Mirrors what syncMetadataFields actually calls; not yet verified against a live Immich.
+ */
+export function metadataSyncPermissions(side: "source" | "target", flags: MetadataSyncFlags = {}): string[] {
+  const required = side === "source" ? ["user.read", "asset.read"] : ["user.read", "asset.read", "asset.update"];
+  if (flags.includeAlbums) {
+    required.push("album.read");
+    if (side === "target") required.push("albumAsset.create", ...(flags.createMissingAlbums ? ["album.create"] : []));
+  }
+  if (flags.includeTags && side === "target") required.push("tag.read", "tag.create", "tag.asset");
+  return required;
+}
+
+/** Like checkRole, for an explicit permission list. */
+export function checkPermissions(granted: readonly string[], required: readonly string[]): RoleCheck {
+  if (granted.includes("all")) return { ok: true, missing: [] };
+  const missing = required.filter((p) => !granted.includes(p));
+  return { ok: missing.length === 0, missing };
+}

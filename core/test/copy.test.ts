@@ -290,3 +290,50 @@ describe("copyAssets", () => {
     expect(target.uploadedMedia).toHaveLength(0);
   });
 });
+describe("copyAssets onAsset/onProgress", () => {
+  test("delivers each asset (including failures) before the call resolves, and ignores listener errors", async () => {
+    const one = bytes("cb one");
+    const two = bytes("cb two");
+    const three = bytes("cb three");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let downloads = 0;
+    const source = fake({
+      assets: [mediaAsset("c1", one), mediaAsset("c2", two), mediaAsset("c3", three)],
+      originals: { c1: one, c2: two, c3: three },
+      downloadFailures: ["c2"],
+      onDownload: async () => { if (++downloads === 3) await Promise.race([held, Bun.sleep(4_000)]); },
+    });
+    const target = fake();
+    const seen: Array<[string, string]> = [];
+    const progress: number[] = [];
+    let resolved = false;
+
+    const run = copyAssets(options(source, target, {
+      onAsset: (asset) => {
+        seen.push([asset.id, asset.status]);
+        if (seen.length === 2) release();
+        throw new Error("listener failure is ignored");
+      },
+      onProgress: (p) => progress.push(p.assetsDone),
+    })).then((result) => { resolved = true; return result; });
+
+    // The third download is held until the second asset event arrives, so the run cannot finish first.
+    const result = await run;
+    expect(resolved).toBe(true);
+    expect(seen).toEqual([["c1", "copied"], ["c2", "failed"], ["c3", "copied"]]);
+    expect(progress).toEqual([1, 2, 3]);
+    if (result.kind !== "copy-run") throw new Error("expected copy-run");
+    expect(result.events.filter((e) => e.type === "asset")).toHaveLength(3);
+    expect(JSON.stringify(seen)).not.toContain(source.apiKey);
+  });
+
+  test("dry runs call no callbacks", async () => {
+    const one = bytes("dry cb");
+    const source = fake({ assets: [mediaAsset("d1", one)] });
+    const target = fake();
+    let calls = 0;
+    await copyAssets(options(source, target, { dryRun: true, onAsset: () => { calls++; }, onProgress: () => { calls++; } }));
+    expect(calls).toBe(0);
+  });
+});

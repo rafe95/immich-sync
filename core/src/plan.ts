@@ -11,7 +11,7 @@ import {
 import { AssetSearchError, collectAssets, findAssetsByChecksum } from "./asset-search.ts";
 import { checkInstance } from "./check.ts";
 import { requestOpts, validateInstanceInput, type Instance } from "./instance.ts";
-import type { Role } from "./permissions.ts";
+import { checkPermissions, metadataSyncPermissions, type MetadataSyncFlags, type Role } from "./permissions.ts";
 
 export type TransferPlanOptions = {
   source: Instance;
@@ -20,6 +20,12 @@ export type TransferPlanOptions = {
   kind?: "all" | "photos" | "videos";
   /** A date-taken window; omitting it includes all eligible dates. */
   range?: { from?: string; to: string };
+  /**
+   * Plan for a standalone metadata sync (sync_metadata), which classifies assets but never uploads or
+   * downloads. The instance checks then require only metadataSyncPermissions (source read; target read
+   * and asset.update; album/tag permissions only for the enabled options) instead of the copy roles.
+   */
+  metadataSync?: MetadataSyncFlags;
 };
 
 export type PlannedComponentStatus = "already-present" | "would-transfer" | "in-target-trash" | "failed";
@@ -211,6 +217,20 @@ function validatePreflight(
   }
 }
 
+function validatePermissions(
+  label: string,
+  check: Awaited<ReturnType<typeof checkInstance>>,
+  required: string[],
+): void {
+  if (!check.ok) {
+    throw new TransferPlanError(`${label} instance check failed during ${check.error?.stage ?? "unknown"}.`);
+  }
+  const result = checkPermissions(check.permissions ?? [], required);
+  if (!result.ok) {
+    throw new TransferPlanError(`${label} instance cannot act for metadata sync; missing ${result.missing.join(", ")}.`);
+  }
+}
+
 async function getLivePhotoVideo(
   instance: Instance,
   sourceAssets: Map<string, AssetResponseDto>,
@@ -295,8 +315,13 @@ export async function planTransfer(options: TransferPlanOptions): Promise<Transf
     checkInstance(options.source),
     checkInstance(options.target),
   ]);
-  validatePreflight("Source", sourceCheck, options.operation === "move" ? "source-move" : "source-copy");
-  validatePreflight("Target", targetCheck, "target-copy");
+  if (options.metadataSync) {
+    validatePermissions("Source", sourceCheck, metadataSyncPermissions("source", options.metadataSync));
+    validatePermissions("Target", targetCheck, metadataSyncPermissions("target", options.metadataSync));
+  } else {
+    validatePreflight("Source", sourceCheck, options.operation === "move" ? "source-move" : "source-copy");
+    validatePreflight("Target", targetCheck, "target-copy");
+  }
 
   if (
     normalizedApiUrl(options.source.apiUrl) === normalizedApiUrl(options.target.apiUrl) &&

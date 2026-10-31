@@ -276,3 +276,86 @@ describe("syncMetadataFields", () => {
     expect(target.requests).toHaveLength(0);
   });
 });
+describe("syncMetadataFields date taken with time zone", () => {
+  const taken = (iso: string, timeZone?: string) => ({ dateTimeOriginal: iso, ...(timeZone ? { timeZone } : {}) });
+
+  test("syncs the instant and offset from an IANA source zone and verifies the target", async () => {
+    const sourceAsset = asset("s-date", { exifInfo: taken("2024-07-01T08:00:00.000Z", "Europe/Berlin") });
+    const targetAsset = asset("t-date", { exifInfo: taken("2024-07-01T09:00:00.000Z", "UTC") });
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id]));
+
+    expect(result.assets[0]).toMatchObject({ status: "updated", changedFields: ["dateTimeOriginal"] });
+    expect(updateRequests(target)[0]?.body).toEqual({ dateTimeOriginal: "2024-07-01T10:00:00.000+02:00" });
+    expect(targetAsset.exifInfo).toMatchObject({ dateTimeOriginal: "2024-07-01T08:00:00.000Z", timeZone: "UTC+2" });
+
+    const rerun = await syncMetadataFields(options(source, target, [sourceAsset.id]));
+    expect(rerun.assets[0]?.status).toBe("already-synced");
+  });
+
+  test("updates only the zone when the instant already matches (fixed UTC offset form)", async () => {
+    const sourceAsset = asset("s-tz", { exifInfo: taken("2024-01-01T12:00:00.000Z", "UTC-05:30") });
+    const targetAsset = asset("t-tz", { exifInfo: taken("2024-01-01T12:00:00.000Z", "UTC") });
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset] });
+
+    await syncMetadataFields(options(source, target, [sourceAsset.id]));
+
+    expect(updateRequests(target)[0]?.body).toEqual({ dateTimeOriginal: "2024-01-01T06:30:00.000-05:30" });
+    expect(targetAsset.exifInfo?.timeZone).toBe("UTC-5:30");
+  });
+
+  test("skips the date when the source has no resolvable time zone instead of guessing", async () => {
+    const noZone = asset("s-nz", { exifInfo: taken("2024-07-01T08:00:00.000Z") });
+    const badZone = asset("s-bz", { exifInfo: taken("2024-07-01T08:00:00.000Z", "Mars/Olympus") });
+    const t1 = asset("t-nz", { exifInfo: taken("2020-01-01T00:00:00.000Z", "UTC") });
+    const t2 = asset("t-bz", { exifInfo: taken("2020-01-01T00:00:00.000Z", "UTC") });
+    t2.checksum = checksum("other");
+    badZone.checksum = checksum("other");
+    const source = fake({ assets: [noZone, badZone] });
+    const target = fake({ assets: [t1, t2] });
+
+    const result = await syncMetadataFields(options(source, target, [noZone.id, badZone.id]));
+
+    expect(result.assets.map((item) => item.status)).toEqual(["already-synced", "already-synced"]);
+    expect(updateRequests(target)).toHaveLength(0);
+  });
+
+  test("dry run does not mutate", async () => {
+    const sourceAsset = asset("s-dry", { exifInfo: taken("2024-07-01T08:00:00.000Z", "UTC+2") });
+    const targetAsset = asset("t-dry", { exifInfo: taken("2020-01-01T00:00:00.000Z", "UTC") });
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id], { dryRun: true }));
+
+    expect(result.assets[0]).toMatchObject({ status: "would-update", changedFields: ["dateTimeOriginal"] });
+    expect(updateRequests(target)).toHaveLength(0);
+    expect(targetAsset.exifInfo?.dateTimeOriginal).toBe("2020-01-01T00:00:00.000Z");
+  });
+
+  test("fails when the target does not reflect the requested date after the update", async () => {
+    const sourceAsset = asset("s-ign", { exifInfo: taken("2024-07-01T08:00:00.000Z", "UTC+2") });
+    const targetAsset = asset("t-ign", { exifInfo: taken("2020-01-01T00:00:00.000Z", "UTC") });
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset], ignoreDateUpdates: true });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id]));
+
+    expect(result.assets[0]?.status).toBe("failed");
+    expect(result.assets[0]?.message).toContain("did not match");
+  });
+
+  test("reports an update failure per asset", async () => {
+    const sourceAsset = asset("s-fail", { exifInfo: taken("2024-07-01T08:00:00.000Z", "UTC+2") });
+    const targetAsset = asset("t-fail", { exifInfo: taken("2020-01-01T00:00:00.000Z", "UTC") });
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset], updateFailures: [targetAsset.id] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id]));
+
+    expect(result.assets[0]).toMatchObject({ status: "failed", message: "HTTP 500" });
+  });
+});

@@ -205,3 +205,28 @@ describe("planTransfer", () => {
     expect(target.requests).toHaveLength(0);
   });
 });
+describe("planTransfer metadataSync option", () => {
+  test("does not require the copy roles when planning for metadata sync", async () => {
+    const source = fake({ permissions: ["user.read", "asset.read"] });
+    const target = fake({ permissions: ["user.read", "asset.read", "asset.update"] });
+
+    const plan = await planTransfer(options(source, target, { metadataSync: {} }));
+    expect(plan.kind).toBe("transfer-preview");
+  });
+
+  test("refuses a target without asset.update, and does not accept asset.upload instead", async () => {
+    const source = fake({ permissions: ["user.read", "asset.read"] });
+    const target = fake({ permissions: ["user.read", "asset.read", "asset.upload"] });
+
+    await expect(planTransfer(options(source, target, { metadataSync: {} }))).rejects.toThrow("asset.update");
+    expect(source.requests).toHaveLength(0);
+  });
+
+  test("album and tag permissions are added only for enabled options", async () => {
+    const source = fake({ permissions: ["user.read", "asset.read"] });
+    const target = fake({ permissions: ["user.read", "asset.read", "asset.update"] });
+
+    await expect(planTransfer(options(source, target, { metadataSync: { includeTags: true } }))).rejects.toThrow("tag.asset");
+    await expect(planTransfer(options(source, target, { metadataSync: { includeAlbums: true } }))).rejects.toThrow("album.read");
+  });
+});
