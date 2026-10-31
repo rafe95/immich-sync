@@ -267,8 +267,14 @@ async function getLivePhotoVideo(
   if (asset.id !== id || asset.type !== AssetTypeEnum.Video) {
     throw new TransferPlanError("Live Photo companion is not a video asset.");
   }
-  if (!isEligibleSourceAsset(asset, ownerId, includeTrashed)) {
-    throw new TransferPlanError("Live Photo companion is not an eligible source asset.");
+  // Immich stores the video half of a Live Photo as a hidden asset, so hidden is allowed here (locked is not).
+  const eligible = asset.ownerId === ownerId &&
+    (includeTrashed || !asset.isTrashed) &&
+    (asset.visibility === AssetVisibility.Timeline || asset.visibility === AssetVisibility.Archive || asset.visibility === AssetVisibility.Hidden);
+  if (!eligible) {
+    throw new TransferPlanError(
+      `Live Photo companion is not an eligible source asset (${asset.ownerId !== ownerId ? "owned by someone else" : asset.isTrashed && !includeTrashed ? "in the source trash" : `visibility ${asset.visibility}`}).`,
+    );
   }
   if (!asset.checksum) throw new TransferPlanError("Live Photo companion has no checksum.");
   return asset;
@@ -326,8 +332,9 @@ async function buildGroups(
     if (kind !== "videos" && asset.type === AssetTypeEnum.Image && asset.livePhotoVideoId) {
       try {
         components.push(await getLivePhotoVideo(source, byId, ownerId, asset.livePhotoVideoId, includeTrashed));
-      } catch {
-        components.push({ id: asset.livePhotoVideoId, error: "Live Photo companion could not be verified." });
+      } catch (error) {
+        const reason = error instanceof TransferPlanError ? error.message : (describeHttpError(error) ?? "request failed");
+        components.push({ id: asset.livePhotoVideoId, error: `Live Photo companion could not be verified: ${reason}` });
       }
     }
     groups.push({ primary: asset, components });

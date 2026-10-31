@@ -226,6 +226,22 @@ describe("planTransfer", () => {
     expect(plan.summary).toMatchObject({ failed: 1, wouldTransfer: 0, bytesToTransfer: 0 });
   });
 
+  test("a hidden Live Photo companion (as Immich stores it) is accepted; a locked one is refused with its reason", async () => {
+    const photo = asset("live-photo", { livePhotoVideoId: "hidden-video" });
+    const hiddenVideo = asset("hidden-video", { type: "VIDEO", visibility: "hidden", originalFileName: "live.mov" });
+    const lockedPhoto = asset("locked-live", { livePhotoVideoId: "locked-video" });
+    const lockedVideo = asset("locked-video", { type: "VIDEO", visibility: "locked", originalFileName: "locked.mov" });
+    const source = fake({ assets: [photo, hiddenVideo, lockedPhoto, lockedVideo] });
+
+    const plan = await planTransfer(options(source, fake(), { kind: "photos" }));
+
+    const byId = Object.fromEntries(plan.assets.map((item) => [item.id, item]));
+    expect(byId["live-photo"]?.status).toBe("would-transfer");
+    expect(byId["live-photo"]?.components.map((component) => component.id)).toEqual(["live-photo", "hidden-video"]);
+    expect(byId["locked-live"]?.status).toBe("failed");
+    expect(byId["locked-live"]?.components.map((component) => component.message).join(" ")).toContain("visibility locked");
+  });
+
   test("refuses a same-server same-user transfer before searching assets", async () => {
     const server = fake();
 
