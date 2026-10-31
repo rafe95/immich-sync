@@ -19,6 +19,7 @@ export type ScheduleRecord = {
 
 export type JobRecord = {
   id: string;
+  ownerId: string;
   name: string;
   steps: StepRecord[];
   schedule: ScheduleRecord | null;
@@ -29,18 +30,25 @@ export type JobRecord = {
 export type ScheduleWrite = { cron: string; timezone: string; enabled: boolean; catchUp: boolean; moveConfirmedAt: Date | null };
 
 export type JobStore = {
-  list(): Promise<JobRecord[]>;
-  get(id: string): Promise<JobRecord | null>;
-  create(input: JobInput): Promise<JobRecord>;
+  list(ownerId: string): Promise<JobRecord[]>;
+  get(ownerId: string, id: string): Promise<JobRecord | null>;
+  create(ownerId: string, input: JobInput): Promise<JobRecord>;
   /** Replaces the steps when given (positions renumbered from 1). */
-  update(id: string, patch: Partial<JobInput>): Promise<JobRecord | null>;
-  delete(id: string): Promise<boolean>;
+  update(ownerId: string, id: string, patch: Partial<JobInput>): Promise<JobRecord | null>;
+  delete(ownerId: string, id: string): Promise<boolean>;
   /** Insert or replace the job's single schedule; null when the job does not exist. */
-  upsertSchedule(jobId: string, input: ScheduleWrite): Promise<ScheduleRecord | null>;
-  deleteSchedule(jobId: string): Promise<boolean>;
-  listSchedules(): Promise<ScheduleRecord[]>;
+  upsertSchedule(ownerId: string, jobId: string, input: ScheduleWrite): Promise<ScheduleRecord | null>;
+  deleteSchedule(ownerId: string, jobId: string): Promise<boolean>;
+  listSchedules(ownerId: string): Promise<ScheduleRecord[]>;
   /** Clears the move confirmation and pauses the schedule (used when a move step is added). */
-  revokeMoveConfirmation(jobId: string): Promise<void>;
+  revokeMoveConfirmation(ownerId: string, jobId: string): Promise<void>;
+  /** Owner-independent access for the scheduler and the run manager's skip records only; request handlers never use it. */
+  system: {
+    get(id: string): Promise<JobRecord | null>;
+    listSchedules(): Promise<ScheduleRecord[]>;
+    /** Pauses every schedule of the owner's jobs. */
+    disableSchedules(ownerId: string): Promise<void>;
+  };
 };
 
 const iso = (v: unknown) => (v == null ? null : new Date(v as string).toISOString());
@@ -82,6 +90,7 @@ export function pgJobStore(sql: SQL): JobStore {
     const schedules = (await sql.unsafe(`select ${SCHEDULE_COLS} from schedules`)).filter((s: any) => ids.has(s.job_id));
     return jobs.map((j) => ({
       id: j.id,
+      ownerId: j.owner_id,
       name: j.name,
       steps: steps.filter((s: any) => s.job_id === j.id).map(toStep),
       schedule: schedules.filter((s: any) => s.job_id === j.id).map(toSchedule)[0] ?? null,
@@ -100,24 +109,25 @@ export function pgJobStore(sql: SQL): JobStore {
     }
   }
 
-  const getJob = async (id: string) => (await assemble(await sql`select * from jobs where id = ${id}`))[0] ?? null;
+  const getJob = async (ownerId: string, id: string) => (await assemble(await sql`select * from jobs where id = ${id} and owner_id = ${ownerId}`))[0] ?? null;
+  const owns = async (ownerId: string, id: string) => (await sql`select id from jobs where id = ${id} and owner_id = ${ownerId}`).length > 0;
 
   return {
-    async list() {
-      return assemble(await sql`select * from jobs order by lower(name), created_at`);
+    async list(ownerId) {
+      return assemble(await sql`select * from jobs where owner_id = ${ownerId} order by lower(name), created_at`);
     },
     get: getJob,
-    async create(input) {
+    async create(ownerId, input) {
       const id = await sql.begin(async (tx) => {
-        const [j] = await tx`insert into jobs (name) values (${input.name}) returning id`;
+        const [j] = await tx`insert into jobs (name, owner_id) values (${input.name}, ${ownerId}) returning id`;
         await insertSteps(tx, j.id, input.steps);
         return j.id as string;
       });
-      return (await getJob(id))!;
+      return (await getJob(ownerId, id))!;
     },
-    async update(id, patch) {
+    async update(ownerId, id, patch) {
       const ok = await sql.begin(async (tx) => {
-        const [j] = await tx`select id from jobs where id = ${id} for update`;
+        const [j] = await tx`select id from jobs where id = ${id} and owner_id = ${ownerId} for update`;
         if (!j) return false;
         if (patch.name !== undefined) await tx`update jobs set name = ${patch.name} where id = ${id}`;
         if (patch.steps) {
@@ -127,14 +137,13 @@ export function pgJobStore(sql: SQL): JobStore {
         await tx`update jobs set updated_at = now() where id = ${id}`;
         return true;
       });
-      return ok ? getJob(id) : null;
+      return ok ? getJob(ownerId, id) : null;
     },
-    async delete(id) {
-      return (await sql`delete from jobs where id = ${id} returning id`).length > 0;
+    async delete(ownerId, id) {
+      return (await sql`delete from jobs where id = ${id} and owner_id = ${ownerId} returning id`).length > 0;
     },
-    async upsertSchedule(jobId, s) {
-      const [job] = await sql`select id from jobs where id = ${jobId}`;
-      if (!job) return null;
+    async upsertSchedule(ownerId, jobId, s) {
+      if (!(await owns(ownerId, jobId))) return null;
       const [r] = await sql.unsafe(
         `insert into schedules (job_id, cron, timezone, enabled, catch_up, move_confirmed_at)
          values ($1, $2, $3, $4, $5, $6)
@@ -145,14 +154,26 @@ export function pgJobStore(sql: SQL): JobStore {
       );
       return toSchedule(r);
     },
-    async deleteSchedule(jobId) {
-      return (await sql`delete from schedules where job_id = ${jobId} returning id`).length > 0;
+    async deleteSchedule(ownerId, jobId) {
+      return (await sql`delete from schedules where job_id = ${jobId} and job_id in (select id from jobs where owner_id = ${ownerId}) returning id`).length > 0;
     },
-    async listSchedules() {
-      return (await sql.unsafe(`select ${SCHEDULE_COLS} from schedules order by created_at`)).map(toSchedule);
+    async listSchedules(ownerId) {
+      return (await sql.unsafe(`select ${SCHEDULE_COLS} from schedules where job_id in (select id from jobs where owner_id = $1) order by created_at`, [ownerId])).map(toSchedule);
     },
-    async revokeMoveConfirmation(jobId) {
-      await sql`update schedules set move_confirmed_at = null, enabled = false, updated_at = now() where job_id = ${jobId}`;
+    async revokeMoveConfirmation(ownerId, jobId) {
+      await sql`update schedules set move_confirmed_at = null, enabled = false, updated_at = now()
+        where job_id = ${jobId} and job_id in (select id from jobs where owner_id = ${ownerId})`;
+    },
+    system: {
+      async get(id) {
+        return (await assemble(await sql`select * from jobs where id = ${id}`))[0] ?? null;
+      },
+      async listSchedules() {
+        return (await sql.unsafe(`select ${SCHEDULE_COLS} from schedules order by created_at`)).map(toSchedule);
+      },
+      async disableSchedules(ownerId) {
+        await sql`update schedules set enabled = false, updated_at = now() where job_id in (select id from jobs where owner_id = ${ownerId})`;
+      },
     },
   };
 }
@@ -163,32 +184,37 @@ export function memoryJobStore(): JobStore {
   const stamp = () => new Date().toISOString();
   const withSteps = (steps: StepInput[]): StepRecord[] => steps.map((s, i) => ({ ...structuredClone(s), id: crypto.randomUUID(), position: i + 1 }));
   const copy = (j: JobRecord): JobRecord => structuredClone(j);
+  /** The job when it exists and belongs to the owner; a foreign job behaves as missing. */
+  const owned = (ownerId: string, id: string) => {
+    const j = jobs.get(id);
+    return j && j.ownerId === ownerId ? j : undefined;
+  };
   return {
-    async list() {
-      return [...jobs.values()].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())).map(copy);
+    async list(ownerId) {
+      return [...jobs.values()].filter((j) => j.ownerId === ownerId).sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())).map(copy);
     },
-    async get(id) {
-      const j = jobs.get(id);
+    async get(ownerId, id) {
+      const j = owned(ownerId, id);
       return j ? copy(j) : null;
     },
-    async create(input) {
-      const j: JobRecord = { id: crypto.randomUUID(), name: input.name, steps: withSteps(input.steps), schedule: null, createdAt: stamp(), updatedAt: stamp() };
+    async create(ownerId, input) {
+      const j: JobRecord = { id: crypto.randomUUID(), ownerId, name: input.name, steps: withSteps(input.steps), schedule: null, createdAt: stamp(), updatedAt: stamp() };
       jobs.set(j.id, j);
       return copy(j);
     },
-    async update(id, patch) {
-      const j = jobs.get(id);
+    async update(ownerId, id, patch) {
+      const j = owned(ownerId, id);
       if (!j) return null;
       if (patch.name !== undefined) j.name = patch.name;
       if (patch.steps) j.steps = withSteps(patch.steps);
       j.updatedAt = stamp();
       return copy(j);
     },
-    async delete(id) {
-      return jobs.delete(id);
+    async delete(ownerId, id) {
+      return owned(ownerId, id) ? jobs.delete(id) : false;
     },
-    async upsertSchedule(jobId, s) {
-      const j = jobs.get(jobId);
+    async upsertSchedule(ownerId, jobId, s) {
+      const j = owned(ownerId, jobId);
       if (!j) return null;
       j.schedule = {
         id: j.schedule?.id ?? crypto.randomUUID(), jobId, cron: s.cron, timezone: s.timezone, enabled: s.enabled, catchUp: s.catchUp,
@@ -196,18 +222,30 @@ export function memoryJobStore(): JobStore {
       };
       return structuredClone(j.schedule);
     },
-    async deleteSchedule(jobId) {
-      const j = jobs.get(jobId);
+    async deleteSchedule(ownerId, jobId) {
+      const j = owned(ownerId, jobId);
       if (!j?.schedule) return false;
       j.schedule = null;
       return true;
     },
-    async listSchedules() {
-      return [...jobs.values()].flatMap((j) => (j.schedule ? [structuredClone(j.schedule)] : []));
+    async listSchedules(ownerId) {
+      return [...jobs.values()].filter((j) => j.ownerId === ownerId).flatMap((j) => (j.schedule ? [structuredClone(j.schedule)] : []));
     },
-    async revokeMoveConfirmation(jobId) {
-      const s = jobs.get(jobId)?.schedule;
+    async revokeMoveConfirmation(ownerId, jobId) {
+      const s = owned(ownerId, jobId)?.schedule;
       if (s) Object.assign(s, { moveConfirmedAt: null, enabled: false, updatedAt: stamp() });
+    },
+    system: {
+      async get(id) {
+        const j = jobs.get(id);
+        return j ? copy(j) : null;
+      },
+      async listSchedules() {
+        return [...jobs.values()].flatMap((j) => (j.schedule ? [structuredClone(j.schedule)] : []));
+      },
+      async disableSchedules(ownerId) {
+        for (const j of jobs.values()) if (j.ownerId === ownerId && j.schedule) Object.assign(j.schedule, { enabled: false, updatedAt: stamp() });
+      },
     },
   };
 }

@@ -26,7 +26,7 @@ export const systemTimers: Timers = {
 export type SchedulerLog = (level: "info" | "warning" | "error", message: string, data?: Record<string, unknown>) => void;
 
 export type SchedulerDeps = {
-  jobs: Pick<JobStore, "get" | "listSchedules">;
+  jobs: { system: Pick<JobStore["system"], "get" | "listSchedules"> };
   runs: Pick<RunManager, "start" | "activeRunForJob" | "recordSkipped">;
   /** When the job last started a schedule-triggered run (for catch-up); null if never. */
   lastScheduledRunAt?: (jobId: string) => Promise<Date | null>;
@@ -61,7 +61,7 @@ export function createScheduler(deps: SchedulerDeps) {
   }
 
   async function fire(s: ScheduleRecord, reason: "due" | "catch-up"): Promise<"started" | "skipped"> {
-    const job = await deps.jobs.get(s.jobId);
+    const job = await deps.jobs.system.get(s.jobId);
     if (!job) return "skipped";
     const tag = `schedule for "${job.name}"`;
     const active = deps.runs.activeRunForJob(s.jobId);
@@ -76,7 +76,7 @@ export function createScheduler(deps: SchedulerDeps) {
       return "skipped";
     }
     try {
-      const run = await deps.runs.start({ job: { id: s.jobId }, trigger: "schedule", startedBy: "schedule", dryRun: false });
+      const run = await deps.runs.start({ job: { id: s.jobId }, trigger: "schedule", ownerId: job.ownerId, startedBy: "schedule", dryRun: false });
       log("info", `Started ${tag}${reason === "catch-up" ? " (catch-up of a missed occurrence)" : ""}: run ${run.id}.`, { jobId: s.jobId, runId: run.id });
       return "started";
     } catch (err) {
@@ -113,7 +113,7 @@ export function createScheduler(deps: SchedulerDeps) {
   async function load(opts: { catchUp: boolean }) {
     const gen = ++generation;
     clearAll();
-    const schedules = (await deps.jobs.listSchedules()).filter((s) => s.enabled);
+    const schedules = (await deps.jobs.system.listSchedules()).filter((s) => s.enabled);
     if (!running || gen !== generation) return;
     const nowMs = timers.now();
     for (const s of schedules) {

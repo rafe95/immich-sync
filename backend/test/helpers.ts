@@ -58,8 +58,13 @@ export function startTestServer(overrides: {
     trustProxy: overrides.trustProxy,
   });
   const base = `http://127.0.0.1:${server.port}`;
-  const ready = overrides.seedAdmin === false ? Promise.resolve() : users.create(USERNAME, ADMIN_HASH, "admin");
-  return { server, base, users, ready, store, jobStore, runStore, manager: svc.manager, stop: () => server.stop(true) };
+  let adminId = "";
+  const ready: Promise<unknown> = overrides.seedAdmin === false ? Promise.resolve() : users.create(USERNAME, ADMIN_HASH, "admin").then((u) => void (adminId = u.id));
+  return {
+    server, base, users, ready,
+    /** The seeded admin's id; set once `ready` has resolved (empty when seedAdmin is false). */
+    get adminId() { return adminId; }, store, jobStore, runStore, manager: svc.manager, stop: () => server.stop(true),
+  };
 }
 
 export async function seedUser(users: UserStore, username: string, password: string, role: Role) {

@@ -3,6 +3,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
 import { migrate } from "../src/db/migrate.ts";
 import { pgInstanceStore } from "../src/instances/store.ts";
+import { hashPassword } from "../src/auth/auth.ts";
+import { pgUserStore } from "../src/auth/users.ts";
 import { pgJobStore } from "../src/jobs/store.ts";
 import type { StepInput } from "../src/jobs/validation.ts";
 import { createRunManager } from "../src/runs/manager.ts";
@@ -24,11 +26,15 @@ const step = (operation: StepInput["operation"], sourceId: string, targetId: str
 });
 
 describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
-  let A = "", B = "", C = "";
+  let A = "", B = "", C = "", OWNER = "", OTHER = "";
 
   test("setup: schema and instances", async () => {
     await sql!.unsafe(`create schema ${schema}`);
     await migrate(sql!);
+    const users = pgUserStore(sql!);
+    const hash = await hashPassword("a long enough password");
+    OWNER = (await users.create("owner", hash, "admin")).id;
+    OTHER = (await users.create("other", hash, "user")).id;
     const inst = pgInstanceStore(sql!);
     const mk = async (alias: string) => (await inst.create({ alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("k"), note: null, isDefault: false })).id;
     [A, B, C] = [await mk("a"), await mk("b"), await mk("c")];
@@ -36,30 +42,49 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
 
   test("job store: create with ordered steps, replace steps, schedule upsert, revoke, cascade delete", async () => {
     const jobs = pgJobStore(sql!);
-    const job = await jobs.create({ name: "Spread", steps: [step("copy", A, B), step("move", B, C, { onFailure: "stop", onError: "continue" })] });
+    const job = await jobs.create(OWNER, { name: "Spread", steps: [step("copy", A, B), step("move", B, C, { onFailure: "stop", onError: "continue" })] });
     expect(job.steps.map((s) => [s.position, s.operation, s.onFailure, s.onError])).toEqual([[1, "copy", "continue", "stop"], [2, "move", "stop", "continue"]]);
     expect(job.steps[0]!.options).toEqual({ range: { lastDays: 7 }, kind: "photos", metadata: true, dryRun: false });
 
-    const updated = await jobs.update(job.id, { name: "Spread 2", steps: [step("sync_metadata", C, A)] });
+    const updated = await jobs.update(OWNER, job.id, { name: "Spread 2", steps: [step("sync_metadata", C, A)] });
     expect(updated!.name).toBe("Spread 2");
     expect(updated!.steps.map((s) => s.operation)).toEqual(["sync_metadata"]);
-    expect(await jobs.update(crypto.randomUUID(), { name: "x" })).toBeNull();
+    expect(await jobs.update(OWNER, crypto.randomUUID(), { name: "x" })).toBeNull();
 
     const when = new Date();
-    const s1 = (await jobs.upsertSchedule(job.id, { cron: "30 0 * * *", timezone: "Europe/Lisbon", enabled: true, catchUp: true, moveConfirmedAt: when }))!;
+    const s1 = (await jobs.upsertSchedule(OWNER, job.id, { cron: "30 0 * * *", timezone: "Europe/Lisbon", enabled: true, catchUp: true, moveConfirmedAt: when }))!;
     expect(s1).toMatchObject({ cron: "30 0 * * *", timezone: "Europe/Lisbon", catchUp: true, moveConfirmedAt: when.toISOString() });
-    const s2 = (await jobs.upsertSchedule(job.id, { cron: "0 1 * * *", timezone: "UTC", enabled: false, catchUp: false, moveConfirmedAt: null }))!;
+    const s2 = (await jobs.upsertSchedule(OWNER, job.id, { cron: "0 1 * * *", timezone: "UTC", enabled: false, catchUp: false, moveConfirmedAt: null }))!;
     expect(s2.id).toBe(s1.id);
-    expect((await jobs.get(job.id))!.schedule).toMatchObject({ cron: "0 1 * * *", enabled: false });
-    await jobs.upsertSchedule(job.id, { cron: "0 1 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: when });
-    await jobs.revokeMoveConfirmation(job.id);
-    expect((await jobs.get(job.id))!.schedule).toMatchObject({ moveConfirmedAt: null, enabled: false });
-    expect(await jobs.upsertSchedule(crypto.randomUUID(), { cron: "0 1 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null })).toBeNull();
+    expect((await jobs.get(OWNER, job.id))!.schedule).toMatchObject({ cron: "0 1 * * *", enabled: false });
+    await jobs.upsertSchedule(OWNER, job.id, { cron: "0 1 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: when });
+    await jobs.revokeMoveConfirmation(OWNER, job.id);
+    expect((await jobs.get(OWNER, job.id))!.schedule).toMatchObject({ moveConfirmedAt: null, enabled: false });
+    expect(await jobs.upsertSchedule(OWNER, crypto.randomUUID(), { cron: "0 1 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null })).toBeNull();
 
-    expect((await jobs.list()).length).toBeGreaterThanOrEqual(1);
-    expect(await jobs.delete(job.id)).toBe(true);
-    expect(await jobs.listSchedules()).toEqual([]);
-    expect(await jobs.delete(job.id)).toBe(false);
+    expect((await jobs.list(OWNER)).length).toBeGreaterThanOrEqual(1);
+    expect(await jobs.delete(OWNER, job.id)).toBe(true);
+    expect(await jobs.listSchedules(OWNER)).toEqual([]);
+    expect(await jobs.delete(OWNER, job.id)).toBe(false);
+  });
+
+  test("job store filters by owner", async () => {
+    const jobs = pgJobStore(sql!);
+    const job = await jobs.create(OWNER, { name: "Private", steps: [step("copy", A, B)] });
+    await jobs.upsertSchedule(OWNER, job.id, { cron: "0 1 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
+    expect(job.ownerId).toBe(OWNER);
+    expect(await jobs.get(OTHER, job.id)).toBeNull();
+    expect(await jobs.list(OTHER)).toEqual([]);
+    expect(await jobs.listSchedules(OTHER)).toEqual([]);
+    expect(await jobs.update(OTHER, job.id, { name: "x" })).toBeNull();
+    expect(await jobs.upsertSchedule(OTHER, job.id, { cron: "0 2 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null })).toBeNull();
+    expect(await jobs.deleteSchedule(OTHER, job.id)).toBe(false);
+    expect(await jobs.delete(OTHER, job.id)).toBe(false);
+    expect((await jobs.system.get(job.id))!.ownerId).toBe(OWNER);
+    expect((await jobs.system.listSchedules()).some((s) => s.jobId === job.id)).toBe(true);
+    await jobs.system.disableSchedules(OWNER);
+    expect((await jobs.get(OWNER, job.id))!.schedule!.enabled).toBe(false);
+    expect(await jobs.delete(OWNER, job.id)).toBe(true);
   });
 
   test("run store and manager on PostgreSQL: lifecycle, events, pagination, recovery, retention", async () => {
@@ -67,9 +92,9 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     const jobs = pgJobStore(sql!);
     const executor = new FakeExecutor();
     const manager = createRunManager({ store: runs, jobs, instances: pgInstanceStore(sql!), executor });
-    const job = await jobs.create({ name: "J", steps: [step("copy", A, B), step("copy", B, C)] });
+    const job = await jobs.create(OWNER, { name: "J", steps: [step("copy", A, B), step("copy", B, C)] });
 
-    const queued = await manager.start({ job: { id: job.id }, trigger: "manual", startedBy: "admin", dryRun: false });
+    const queued = await manager.start({ job: { id: job.id }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun: false });
     expect(queued.steps.map((s) => s.status)).toEqual(["pending", "pending"]);
     await manager.whenIdle();
     const done = (await runs.getRun(queued.id))!;
@@ -88,7 +113,7 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     expect((await runs.listEvents(queued.id, 0, 2)).length).toBe(2);
 
     // pagination and filters
-    for (let i = 0; i < 3; i++) await manager.start({ job: { id: job.id }, trigger: "schedule", startedBy: "schedule", dryRun: true });
+    for (let i = 0; i < 3; i++) await manager.start({ job: { id: job.id }, trigger: "schedule", ownerId: OWNER, startedBy: "schedule", dryRun: true });
     await manager.whenIdle();
     const p1 = await runs.listRuns({ limit: 3, offset: 0 });
     const p2 = await runs.listRuns({ limit: 3, offset: 3 });
@@ -120,7 +145,7 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     expect((await sql!`select count(*)::int as n from run_steps where run_id = ${queued.id}`)[0].n).toBe(0);
 
     // deleting the job keeps history (job_id set null)
-    await jobs.delete(job.id);
+    await jobs.delete(OWNER, job.id);
     expect((await runs.getRun(stuck.id))!.jobId).toBeNull();
   });
 });

@@ -31,16 +31,17 @@ describe("dashboard API", () => {
 
   test("returns the exact shape without secrets", async () => {
     const t = startTestServer({ executor: new FakeExecutor() });
+    await t.ready;
     const [a, b] = await twoInstances(t.store);
     await t.store.saveCheck(a, { ok: true, version: "3.3.0", versionStatus: "supported", user: { email: "x@y" }, permissions: ["all"], error: null }, new Date("2026-01-01T00:00:00Z"));
     await t.store.saveCheck(b, { ok: false, version: null, versionStatus: null, error: { stage: "ping", message: "down" } }, new Date("2026-01-02T00:00:00Z"));
-    const job = await t.jobStore.create({ name: "Nightly", steps: [step("copy", a, b)] });
-    await t.jobStore.upsertSchedule(job.id, { cron: "0 3 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
-    const paused = await t.jobStore.create({ name: "Paused", steps: [step("copy", a, b)] });
-    await t.jobStore.upsertSchedule(paused.id, { cron: "0 4 * * *", timezone: "UTC", enabled: false, catchUp: false, moveConfirmedAt: null });
-    const mv = await t.jobStore.create({ name: "Mover", steps: [step("move", a, b)] });
-    await t.jobStore.upsertSchedule(mv.id, { cron: "0 5 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
-    const r = await t.manager.start({ job: { id: job.id }, trigger: "manual", startedBy: "admin", dryRun: false });
+    const job = await t.jobStore.create(t.adminId, { name: "Nightly", steps: [step("copy", a, b)] });
+    await t.jobStore.upsertSchedule(t.adminId, job.id, { cron: "0 3 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
+    const paused = await t.jobStore.create(t.adminId, { name: "Paused", steps: [step("copy", a, b)] });
+    await t.jobStore.upsertSchedule(t.adminId, paused.id, { cron: "0 4 * * *", timezone: "UTC", enabled: false, catchUp: false, moveConfirmedAt: null });
+    const mv = await t.jobStore.create(t.adminId, { name: "Mover", steps: [step("move", a, b)] });
+    await t.jobStore.upsertSchedule(t.adminId, mv.id, { cron: "0 5 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
+    const r = await t.manager.start({ job: { id: job.id }, trigger: "manual", ownerId: t.adminId, startedBy: "admin", dryRun: false });
     await t.manager.whenIdle();
     await t.manager.recordSkipped(job.id, "skipped: previous run still active");
 
@@ -71,12 +72,12 @@ describe("dashboard API", () => {
     const t = startTestServer({ executor: ex });
     const [a, b] = await twoInstances(t.store);
     for (let i = 0; i < 7; i++) {
-      const j = await t.jobStore.create({ name: `J${i}`, steps: [step("copy", a, b)] });
-      await t.jobStore.upsertSchedule(j.id, { cron: `0 ${23 - i} * * *`, timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
+      const j = await t.jobStore.create(t.adminId, { name: `J${i}`, steps: [step("copy", a, b)] });
+      await t.jobStore.upsertSchedule(t.adminId, j.id, { cron: `0 ${23 - i} * * *`, timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
     }
     for (let i = 0; i < 12; i++) await t.runStore.createSkippedRun({ jobId: null, jobName: `s${i}`, settings: { jobId: null, name: "x", dryRun: false, steps: [] }, reason: "skipped: x" }, new Date());
     ex.gates.set(1, new Promise(() => {}));
-    const live = await t.manager.start({ job: { name: "live", steps: [step("copy", a, b)] }, trigger: "manual", startedBy: "admin", dryRun: false });
+    const live = await t.manager.start({ job: { name: "live", steps: [step("copy", a, b)] }, trigger: "manual", ownerId: t.adminId, startedBy: "admin", dryRun: false });
     await ex.hasStarted(1);
     const { call } = await loggedIn(t.base);
     const body = await (await call("GET", "/api/dashboard")).json();
@@ -98,7 +99,7 @@ describe("skipped schedule runs", () => {
     const jobs = memoryJobStore();
     const store = memoryRunStore();
     const manager = createRunManager({ store, jobs, instances, executor: new FakeExecutor() });
-    const job = await jobs.create({ name: "Nightly", steps: [step("move", a, b)] });
+    const job = await jobs.create("99999999-9999-4999-8999-999999999999", { name: "Nightly", steps: [step("move", a, b)] });
     const run = await manager.recordSkipped(job.id, "skipped: previous run still active");
     expect(run).toMatchObject({ status: "skipped", trigger: "schedule", startedBy: "schedule", jobId: job.id, jobName: "Nightly" });
     expect(run.finishedAt).not.toBeNull();
@@ -206,7 +207,7 @@ describe("progress throttling", () => {
       return orig(ctx);
     };
     const manager = createRunManager({ store, jobs: memoryJobStore(), instances, executor: ex, nowMs: () => 0 });
-    const r = await manager.start({ job: { name: "j", steps: [step("copy", a, b), step("copy", b, a)] }, trigger: "manual", startedBy: "admin", dryRun: false });
+    const r = await manager.start({ job: { name: "j", steps: [step("copy", a, b), step("copy", b, a)] }, trigger: "manual", ownerId: "99999999-9999-4999-8999-999999999999", startedBy: "admin", dryRun: false });
     await manager.whenIdle();
     const progress = store.events.filter((e) => e.runId === r.id && e.type === "progress");
     // frozen clock: the first event per step is written, the rest are held and the last one is flushed at step end

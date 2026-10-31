@@ -18,6 +18,8 @@ export type StartRequest = {
   /** Run a saved job, or give ad-hoc steps (the "Run" screen). */
   job?: { id: string } | { name: string; steps: StepInput[] };
   trigger: RunTrigger;
+  /** The user the run is started for; a saved job must belong to them. */
+  ownerId: string;
   startedBy: string;
   dryRun: boolean;
 };
@@ -46,7 +48,7 @@ export function createRunManager(deps: RunManagerDeps) {
     let name: string;
     let steps: StepInput[];
     if ("id" in req.job!) {
-      const job = await deps.jobs.get(req.job.id);
+      const job = await deps.jobs.get(req.ownerId, req.job.id);
       if (!job) throw new HttpError(404, "Job not found.");
       jobId = job.id;
       name = job.name;
@@ -99,12 +101,13 @@ export function createRunManager(deps: RunManagerDeps) {
      * in history. It is never launched, so it takes no lock and never counts as active.
      */
     async recordSkipped(jobId: string, reason: string): Promise<RunRecord> {
+      const job = await deps.jobs.system.get(jobId);
+      if (!job) throw new HttpError(404, "Job not found.");
       let snap: Awaited<ReturnType<typeof snapshot>>;
       try {
-        snap = await snapshot({ job: { id: jobId }, trigger: "schedule", startedBy: "schedule", dryRun: false });
+        snap = await snapshot({ job: { id: jobId }, trigger: "schedule", ownerId: job.ownerId, startedBy: "schedule", dryRun: false });
       } catch {
-        const job = await deps.jobs.get(jobId); // instances may be gone; still record the skip
-        if (!job) throw new HttpError(404, "Job not found.");
+        // Instances may be gone; still record the skip.
         snap = { jobId, name: job.name, settings: { jobId, name: job.name, dryRun: false, steps: [] } };
       }
       return deps.store.createSkippedRun({ jobId: snap.jobId, jobName: snap.name, settings: snap.settings, reason }, new Date());

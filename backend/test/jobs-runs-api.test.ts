@@ -17,7 +17,8 @@ async function setup(opts: { heartbeatMs?: number } = {}) {
     (await t.store.create({ alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
   const [A, B, C] = [await mk("A"), await mk("B"), await mk("C")] as [string, string, string];
   const job = (over: Record<string, unknown> = {}) => ({ name: "Nightly", steps: [{ operation: "copy", sourceId: A, targetId: B }], ...over });
-  return { ...t, ...client, executor, A, B, C, job };
+  await t.ready;
+  return { ...t, ...client, adminId: t.adminId, executor, A, B, C, job };
 }
 
 describe("run attribution", () => {
@@ -28,9 +29,38 @@ describe("run attribution", () => {
     const adhoc = await bob.call("POST", "/api/runs", { name: "x", steps: [{ operation: "copy", sourceId: t.A, targetId: t.B }], dryRun: true });
     expect(adhoc.status).toBe(202);
     expect((await adhoc.json()).startedBy).toBe("bob");
-    const job = await (await t.call("POST", "/api/jobs", t.job())).json();
+    const job = await (await bob.call("POST", "/api/jobs", t.job())).json();
     const saved = await bob.call("POST", `/api/jobs/${job.id}/run`, { dryRun: true });
     expect((await saved.json()).startedBy).toBe("bob");
+  });
+});
+
+describe("job ownership", () => {
+  test("jobs are private to their owner", async () => {
+    const t = await setup();
+    const created = await (await t.call("POST", "/api/jobs", t.job())).json();
+    await t.call("PUT", `/api/jobs/${created.id}/schedule`, { cron: "0 3 * * *" });
+    await seedUser(t.users, "bob", "bobs long passphrase", "user");
+    const bob = await loggedIn(t.base, "bob", "bobs long passphrase");
+    expect((await (await bob.call("GET", "/api/jobs")).json()).jobs).toEqual([]);
+    expect((await (await bob.call("GET", "/api/schedules")).json()).schedules).toEqual([]);
+    const missing = await t.call("GET", `/api/jobs/${crypto.randomUUID()}`);
+    expect(missing.status).toBe(404);
+    const missingBody = await missing.json();
+    const id = created.id;
+    const attempts: Array<[string, string, unknown?]> = [
+      ["GET", `/api/jobs/${id}`], ["PATCH", `/api/jobs/${id}`, { name: "x" }], ["DELETE", `/api/jobs/${id}`],
+      ["POST", `/api/jobs/${id}/run`, {}], ["GET", `/api/jobs/${id}/schedule`], ["PUT", `/api/jobs/${id}/schedule`, { cron: "0 4 * * *" }], ["DELETE", `/api/jobs/${id}/schedule`],
+    ];
+    for (const [method, path, body] of attempts) {
+      const res = await bob.call(method, path, body);
+      expect([method, path, res.status]).toEqual([method, path, 404]);
+    }
+    expect((await bob.call("GET", `/api/jobs/${id}`).then((r) => r.json()))).toEqual(missingBody);
+    // the owner's job is untouched
+    const still = await (await t.call("GET", `/api/jobs/${id}`)).json();
+    expect(still.name).toBe("Nightly");
+    expect(still.schedule).not.toBeNull();
   });
 });
 
@@ -44,7 +74,7 @@ describe("jobs API", () => {
     expect(noCsrf.status).toBe(403);
     const put = await fetch(`${t.base}/api/jobs/${crypto.randomUUID()}/schedule`, { method: "PUT", headers: { cookie: t.cookie }, body: "{}" });
     expect(put.status).toBe(403);
-    expect(await t.jobStore.list()).toEqual([]);
+    expect(await t.jobStore.list(t.adminId)).toEqual([]);
   });
 
   test("create, get, list, update (replace steps / rename), delete", async () => {
@@ -80,7 +110,7 @@ describe("jobs API", () => {
     expect((await post(t.job({ steps: [{ operation: "copy", sourceId: t.A, targetId: t.B, options: { range: {} } }] }))).status).toBe(400);
     expect((await post({ name: "x" })).status).toBe(400);
     expect((await t.call("PATCH", `/api/jobs/${crypto.randomUUID()}`, { name: "x" })).status).toBe(404);
-    expect(await t.jobStore.list()).toEqual([]);
+    expect(await t.jobStore.list(t.adminId)).toEqual([]);
   });
 
   test("schedule: create, next runs, time zone default, pause, delete; validation", async () => {
@@ -113,7 +143,7 @@ describe("jobs API", () => {
     const refused = await put(mv.id, {});
     expect(refused.status).toBe(400);
     expect((await refused.json()).confirmationRequired).toBe(true);
-    expect(await t.jobStore.listSchedules()).toEqual([]);
+    expect(await t.jobStore.listSchedules(t.adminId)).toEqual([]);
     // a paused schedule may be saved without confirmation, but is not confirmed
     expect((await (await put(mv.id, { enabled: false })).json()).moveConfirmedAt).toBeNull();
     expect((await put(mv.id, {})).status).toBe(400);

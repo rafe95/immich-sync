@@ -6,6 +6,8 @@ import { createRunManager } from "../src/runs/manager.ts";
 import { memoryRunStore, pruneHistory } from "../src/runs/store.ts";
 import { FakeExecutor } from "./fake-executor.ts";
 
+const OWNER = "99999999-9999-4999-8999-999999999999";
+
 async function setup() {
   const instances = memoryInstanceStore();
   const mk = async (alias: string) => (await instances.create({ alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
@@ -18,7 +20,7 @@ async function setup() {
     operation, sourceId, targetId, onFailure: "continue", onError: "stop", options: { range: null, kind: "all", metadata: true, dryRun: false }, ...over,
   });
   const run = async (steps: StepInput[], dryRun = false) => {
-    const r = await manager.start({ job: { name: "job", steps }, trigger: "manual", startedBy: "admin", dryRun });
+    const r = await manager.start({ job: { name: "job", steps }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun });
     return r;
   };
   const finished = async (id: string) => {
@@ -173,15 +175,15 @@ describe("run orchestration with a fake executor", () => {
 
   test("starting a run for an unknown job or deleted instance is rejected", async () => {
     const t = await setup();
-    await expect(t.manager.start({ job: { id: crypto.randomUUID() }, trigger: "manual", startedBy: "admin", dryRun: false })).rejects.toMatchObject({ status: 404 });
+    await expect(t.manager.start({ job: { id: crypto.randomUUID() }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun: false })).rejects.toMatchObject({ status: 404 });
     await expect(t.run([t.step("copy", t.A, crypto.randomUUID())])).rejects.toMatchObject({ status: 400 });
   });
 
   test("settings snapshot is independent of later job edits", async () => {
     const t = await setup();
-    const job = await t.jobs.create({ name: "J", steps: [t.step("copy", t.A, t.B)] });
-    const run = await t.manager.start({ job: { id: job.id }, trigger: "schedule", startedBy: "schedule", dryRun: false });
-    await t.jobs.update(job.id, { steps: [t.step("move", t.B, t.C)] });
+    const job = await t.jobs.create(OWNER, { name: "J", steps: [t.step("copy", t.A, t.B)] });
+    const run = await t.manager.start({ job: { id: job.id }, trigger: "schedule", ownerId: OWNER, startedBy: "schedule", dryRun: false });
+    await t.jobs.update(OWNER, job.id, { steps: [t.step("move", t.B, t.C)] });
     await t.manager.whenIdle();
     const stored = (await t.store.getRun(run.id))!;
     expect(stored.settings.steps[0]).toMatchObject({ operation: "copy", source: { alias: "A" } });

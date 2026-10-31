@@ -42,7 +42,7 @@ async function setup(source: Fake, target: Fake, over: { sourceKey?: string } = 
     options: { range: null, kind: "all", metadata: false, dryRun: false, ...options },
   });
   const run = async (steps: StepInput[], dryRun = false) => {
-    const started = await svc.manager.start({ job: { name: "t", steps }, trigger: "manual", startedBy: "admin", dryRun });
+    const started = await svc.manager.start({ job: { name: "t", steps }, trigger: "manual", ownerId: "99999999-9999-4999-8999-999999999999", startedBy: "admin", dryRun });
     await svc.manager.whenIdle();
     return { record: (await runs.getRun(started.id))!, events: runs.events.filter((e) => e.runId === started.id), svc };
   };

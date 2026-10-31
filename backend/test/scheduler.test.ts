@@ -6,6 +6,7 @@ import { createScheduler, type Timers } from "../src/scheduler.ts";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
+const OWNER = "99999999-9999-4999-8999-999999999999";
 
 /** Manual clock: timers fire in order as time is advanced. */
 function fakeTimers(start: string) {
@@ -52,7 +53,7 @@ const step = (operation: StepInput["operation"] = "copy"): StepInput => ({
 async function setup(start = "2026-03-01T08:00:00Z") {
   const clock = fakeTimers(start);
   const jobs: JobStore = memoryJobStore();
-  const started: Array<{ jobId: string; trigger: string; startedBy: string; dryRun: boolean }> = [];
+  const started: Array<{ jobId: string; ownerId: string; trigger: string; startedBy: string; dryRun: boolean }> = [];
   const logs: string[] = [];
   const skipped: Array<{ jobId: string; reason: string }> = [];
   const active = new Map<string, string>();
@@ -61,7 +62,7 @@ async function setup(start = "2026-03-01T08:00:00Z") {
     jobs,
     runs: {
       start: async (req: any) => {
-        started.push({ jobId: req.job.id, trigger: req.trigger, startedBy: req.startedBy, dryRun: req.dryRun });
+        started.push({ jobId: req.job.id, ownerId: req.ownerId, trigger: req.trigger, startedBy: req.startedBy, dryRun: req.dryRun });
         return { id: `run-${started.length}` } as never;
       },
       activeRunForJob: (id: string) => active.get(id) ?? null,
@@ -75,8 +76,8 @@ async function setup(start = "2026-03-01T08:00:00Z") {
     log: (_l, m) => void logs.push(m),
   });
   const mk = async (sched: Partial<{ cron: string; timezone: string; enabled: boolean; catchUp: boolean; moveConfirmedAt: Date | null }> = {}, steps = [step()]) => {
-    const job = await jobs.create({ name: "Nightly", steps });
-    await jobs.upsertSchedule(job.id, { cron: "0 9 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null, ...sched });
+    const job = await jobs.create(OWNER, { name: "Nightly", steps });
+    await jobs.upsertSchedule(OWNER, job.id, { cron: "0 9 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null, ...sched });
     return job;
   };
   return { clock, jobs, scheduler, started, skipped, logs, active, mk, setLast: (d: Date | null) => (lastScheduled = d) };
@@ -90,9 +91,19 @@ describe("scheduler", () => {
     await t.clock.advanceTo("2026-03-01T23:59:00Z");
     expect(t.started).toHaveLength(0);
     await t.clock.advanceTo("2026-03-02T00:00:30Z");
-    expect(t.started).toEqual([{ jobId: job.id, trigger: "schedule", startedBy: "schedule", dryRun: false }]);
+    expect(t.started).toEqual([{ jobId: job.id, ownerId: OWNER, trigger: "schedule", startedBy: "schedule", dryRun: false }]);
     await t.clock.advanceTo("2026-03-03T00:00:30Z");
     expect(t.started).toHaveLength(2);
+    t.scheduler.stop();
+  });
+
+  test("scheduled run carries the job owner", async () => {
+    const t = await setup("2026-03-01T08:00:00Z");
+    const job = await t.mk();
+    await t.scheduler.start();
+    await t.clock.advanceTo("2026-03-01T09:00:30Z");
+    expect(t.started).toHaveLength(1);
+    expect(t.started[0]).toMatchObject({ jobId: job.id, ownerId: OWNER });
     t.scheduler.stop();
   });
 
@@ -130,7 +141,7 @@ describe("scheduler", () => {
     expect(t.logs.join("\n")).toContain("no move confirmation");
     expect(t.skipped).toHaveLength(1);
     expect(t.skipped[0]!.reason).toContain("move confirmation");
-    await t.jobs.upsertSchedule(job.id, { cron: "0 9 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: new Date("2026-03-01T10:00:00Z") });
+    await t.jobs.upsertSchedule(OWNER, job.id, { cron: "0 9 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: new Date("2026-03-01T10:00:00Z") });
     await t.scheduler.reload();
     await t.clock.advanceTo("2026-03-02T09:00:30Z");
     expect(t.started).toHaveLength(1);
@@ -179,7 +190,7 @@ describe("scheduler", () => {
     await t.scheduler.reload();
     expect(t.scheduler.armedCount()).toBe(1);
 
-    await t.jobs.upsertSchedule(job.id, { cron: "0 12 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
+    await t.jobs.upsertSchedule(OWNER, job.id, { cron: "0 12 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
     await t.scheduler.reload();
     expect(t.scheduler.armedCount()).toBe(1);
     await t.clock.advanceTo("2026-03-01T09:30:00Z");
@@ -187,7 +198,7 @@ describe("scheduler", () => {
     await t.clock.advanceTo("2026-03-01T12:00:30Z");
     expect(t.started).toHaveLength(1);
 
-    await t.jobs.deleteSchedule(job.id);
+    await t.jobs.deleteSchedule(OWNER, job.id);
     await t.scheduler.reload();
     expect(t.scheduler.armedCount()).toBe(0);
     await t.clock.advanceTo("2026-03-03T00:00:00Z");

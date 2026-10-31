@@ -31,11 +31,11 @@ function lastCheckView(raw: unknown) {
 export function createDashboardRoutes(deps: DashboardDeps) {
   const now = deps.now ?? (() => new Date());
   return {
-    get: async () => {
+    get: async (_req: Request, ctx: { user: { id: string } }) => {
       const at = now();
       const [instances, jobs, recent, running, stats] = await Promise.all([
         deps.instances.list(),
-        deps.jobs.list(),
+        deps.jobs.list(ctx.user.id),
         deps.runs.listRuns({ limit: 10, offset: 0 }),
         deps.runs.listRuns({ limit: 100, offset: 0, status: "running" }),
         deps.runs.statsSince(new Date(at.getTime() - 7 * 86_400_000)),
