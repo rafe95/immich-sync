@@ -101,7 +101,7 @@ export function createAuth(options: AuthOptions) {
         if (!sent || !safeEqual(sent, session.csrfToken)) return json({ message: "Invalid or missing CSRF token." }, 403);
       }
       const user = await users.get(session.userId);
-      if (!user) return json({ message: "Authentication required." }, 401);
+      if (!user || user.deletingAt) return json({ message: "Authentication required." }, 401);
       try {
         return await handler(req, { ...session, user });
       } catch (err) {
@@ -185,7 +185,8 @@ export function createAuth(options: AuthOptions) {
     const found = username ? await users.getCredentials(username) : null;
     dummyHash ??= hashPassword("dummy password for unknown users");
     const ok = await verify(password || "-", found?.hash ?? (await dummyHash));
-    if (!found || !password || !ok) {
+    // A user whose deletion has started is refused exactly like a wrong password (same response, same backoff).
+    if (!found || !password || !ok || found.user.deletingAt) {
       limiter.recordFailure(clientKey);
       return json({ message: "Invalid username or password." }, 401);
     }

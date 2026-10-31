@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { memoryJobStore } from "../src/jobs/store.ts";
 import type { JobStore } from "../src/jobs/store.ts";
 import type { StepInput } from "../src/jobs/validation.ts";
+import { memoryInstanceStore } from "../src/instances/store.ts";
+import { createRunManager } from "../src/runs/manager.ts";
+import { memoryRunStore } from "../src/runs/store.ts";
 import { createScheduler, type Timers } from "../src/scheduler.ts";
 
 const A = "11111111-1111-4111-8111-111111111111";
@@ -84,6 +87,25 @@ async function setup(start = "2026-03-01T08:00:00Z") {
 }
 
 describe("scheduler", () => {
+  test("scheduler does not start a run for an owner being deleted", async () => {
+    const clock = fakeTimers("2026-03-01T08:00:00Z");
+    const jobs = memoryJobStore();
+    const runs = memoryRunStore();
+    const logs: string[] = [];
+    const manager = createRunManager({
+      store: runs, jobs, instances: memoryInstanceStore(), executor: { run: async () => { throw new Error("must not execute"); } } as never,
+      owners: { isDeleting: async (id) => id === OWNER },
+    });
+    const scheduler = createScheduler({ jobs, runs: manager, timers: clock.timers, log: (_l, m) => void logs.push(m) });
+    const job = await jobs.create(OWNER, { name: "Nightly", steps: [step()] });
+    await jobs.upsertSchedule(OWNER, job.id, { cron: "0 9 * * *", timezone: "UTC", enabled: true, catchUp: false, moveConfirmedAt: null });
+    await scheduler.start();
+    await clock.advanceTo("2026-03-01T09:00:30Z");
+    expect(logs.some((m) => m.includes("being deleted"))).toBe(true);
+    expect((await runs.system.listRuns({ limit: 10, offset: 0 })).runs).toHaveLength(0); // not even a skipped record
+    scheduler.stop();
+  });
+
   test("fires at the next occurrence in the schedule's time zone, as a schedule-triggered run", async () => {
     const t = await setup("2026-03-01T00:00:00Z");
     const job = await t.mk({ cron: "0 9 * * *", timezone: "Asia/Tokyo" }); // 09:00 JST = 00:00 UTC

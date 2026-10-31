@@ -38,6 +38,7 @@ export function startTestServer(overrides: {
   const runStore = overrides.runStore ?? memoryRunStore();
   const svc = createJobRunServices({
     instances: store, jobs: jobStore, runs: runStore, executor: overrides.executor ?? unwiredExecutor,
+    owners: { isDeleting: async (id) => (await users.get(id))?.deletingAt != null },
     heartbeatMs: overrides.heartbeatMs, defaultTimezone: overrides.defaultTimezone ?? "UTC",
   });
   const server = createServer({

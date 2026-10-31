@@ -29,7 +29,9 @@ async function main() {
   const instanceStore = pgInstanceStore(db.sql);
   const runStore = pgRunStore(db.sql);
   const executor = createCoreExecutor({ instances: instanceStore.system, secretKey: config.secretKey });
-  const services = createJobRunServices({ instances: instanceStore, jobs: pgJobStore(db.sql), runs: runStore, executor });
+  const userStore = pgUserStore(db.sql);
+  const owners = { isDeleting: async (ownerId: string) => (await userStore.get(ownerId))?.deletingAt != null };
+  const services = createJobRunServices({ instances: instanceStore, jobs: pgJobStore(db.sql), runs: runStore, executor, owners });
   const interrupted = await services.manager.recoverInterrupted();
   if (interrupted.length) console.log(`Marked ${interrupted.length} run(s) from the previous process as interrupted.`);
   const pruner = createRetentionPruner({ runs: runStore }); // prunes now, then daily
@@ -39,7 +41,7 @@ async function main() {
     port: config.port,
     staticDir: config.staticDir,
     db,
-    auth: { users: pgUserStore(db.sql), sessions: pgSessionStore(db.sql), secureCookies: config.cookieSecure },
+    auth: { users: userStore, sessions: pgSessionStore(db.sql), secureCookies: config.cookieSecure },
     instances: { store: instanceStore, secretKey: config.secretKey },
     jobs: services.jobs,
     runs: services.runs,

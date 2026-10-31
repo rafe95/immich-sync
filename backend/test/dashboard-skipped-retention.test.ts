@@ -92,7 +92,7 @@ describe("dashboard API", () => {
     const [a, b] = await twoInstances(instances, OWNER);
     const jobs = memoryJobStore();
     const store = memoryRunStore();
-    const manager = createRunManager({ store, jobs, instances, executor: new FakeExecutor() });
+    const manager = createRunManager({ store, jobs, instances, executor: new FakeExecutor(), owners: { isDeleting: async () => false } });
     const job = await jobs.create(OWNER, { name: "Nightly", steps: [step("copy", a, b)] });
     const run = await manager.recordSkipped(job.id, "skipped: x");
     expect(run.ownerId).toBe(OWNER);
@@ -132,7 +132,7 @@ describe("skipped schedule runs", () => {
     const [a, b] = await twoInstances(instances, OWNER);
     const jobs = memoryJobStore();
     const store = memoryRunStore();
-    const manager = createRunManager({ store, jobs, instances, executor: new FakeExecutor() });
+    const manager = createRunManager({ store, jobs, instances, executor: new FakeExecutor(), owners: { isDeleting: async () => false } });
     const job = await jobs.create(OWNER, { name: "Nightly", steps: [step("move", a, b)] });
     const run = await manager.recordSkipped(job.id, "skipped: previous run still active");
     expect(run).toMatchObject({ status: "skipped", trigger: "schedule", startedBy: "schedule", jobId: job.id, jobName: "Nightly" });
@@ -241,7 +241,7 @@ describe("progress throttling", () => {
       for (let i = 1; i <= 5; i++) await ctx.log({ level: "info", type: "progress", data: { step: ctx.position, done: i } });
       return orig(ctx);
     };
-    const manager = createRunManager({ store, jobs: memoryJobStore(), instances, executor: ex, nowMs: () => 0 });
+    const manager = createRunManager({ store, jobs: memoryJobStore(), instances, executor: ex, nowMs: () => 0, owners: { isDeleting: async () => false } });
     const r = await manager.start({ job: { name: "j", steps: [step("copy", a, b), step("copy", b, a)] }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun: false });
     await manager.whenIdle();
     const progress = store.events.filter((e) => e.runId === r.id && e.type === "progress");

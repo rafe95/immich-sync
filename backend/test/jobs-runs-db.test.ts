@@ -92,7 +92,7 @@ describe.skipIf(!url)("jobs and runs (PostgreSQL)", () => {
     const runs = pgRunStore(sql!);
     const jobs = pgJobStore(sql!);
     const executor = new FakeExecutor();
-    const manager = createRunManager({ store: runs, jobs, instances: pgInstanceStore(sql!), executor });
+    const manager = createRunManager({ store: runs, jobs, instances: pgInstanceStore(sql!), executor, owners: { isDeleting: async () => false } });
     const job = await jobs.create(OWNER, { name: "J", steps: [step("copy", A, B), step("copy", B, C)] });
 
     const queued = await manager.start({ job: { id: job.id }, trigger: "manual", ownerId: OWNER, startedBy: "admin", dryRun: false });

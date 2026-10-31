@@ -3,7 +3,15 @@
 import type { SQL } from "bun";
 
 export type Role = "admin" | "user";
-export type User = { id: string; username: string; role: Role; createdAt: string; lastLoginAt: string | null };
+export type User = {
+  id: string;
+  username: string;
+  role: Role;
+  createdAt: string;
+  lastLoginAt: string | null;
+  /** Set once the account's deletion has started: the user is locked out until the deletion completes. */
+  deletingAt: string | null;
+};
 /** The part of a user that is returned from login/setup/me. */
 export type UserView = Pick<User, "id" | "username" | "role">;
 
@@ -59,6 +67,8 @@ export type UserStore = {
   /** False when the user does not exist. Throws LastAdminError when it would delete the last admin. */
   delete(id: string): Promise<boolean>;
   touchLogin(id: string, at: Date): Promise<void>;
+  /** Locks the user out (login and sessions) ahead of deleting them. Null when missing; throws LastAdminError under the same rule as `delete`. */
+  markDeleting(id: string, at: Date): Promise<User | null>;
 };
 
 export function memoryUserStore(): UserStore {
@@ -70,7 +80,7 @@ export function memoryUserStore(): UserStore {
   // No awaits between check and write below, so each operation is atomic on the single JS thread.
   const insert = (username: string, hash: string, role: Role): Row => {
     if (byName(username)) throw new UsernameTakenError();
-    const row = { id: crypto.randomUUID(), username: username.toLowerCase(), role, hash, createdAt: new Date().toISOString(), lastLoginAt: null };
+    const row = { id: crypto.randomUUID(), username: username.toLowerCase(), role, hash, createdAt: new Date().toISOString(), lastLoginAt: null, deletingAt: null };
     rows.set(row.id, row);
     return row;
   };
@@ -118,6 +128,13 @@ export function memoryUserStore(): UserStore {
       const r = rows.get(id);
       if (r) r.lastLoginAt = at.toISOString();
     },
+    async markDeleting(id, at) {
+      const r = rows.get(id);
+      if (!r) return null;
+      if (r.role === "admin" && admins() <= 1) throw new LastAdminError();
+      r.deletingAt = at.toISOString();
+      return copy(r);
+    },
   };
 }
 
@@ -128,13 +145,14 @@ function pgCode(err: unknown): string | undefined {
 /** Serializes every operation that creates the first user or could remove the last admin. */
 const USERS_LOCK = 7_355_608;
 
-const COLS = "id, username, role, created_at, last_login_at";
+const COLS = "id, username, role, created_at, last_login_at, deleting_at";
 const toUser = (r: any): User => ({
   id: r.id,
   username: r.username,
   role: r.role,
   createdAt: new Date(r.created_at).toISOString(),
   lastLoginAt: r.last_login_at ? new Date(r.last_login_at).toISOString() : null,
+  deletingAt: r.deleting_at ? new Date(r.deleting_at).toISOString() : null,
 });
 
 export function pgUserStore(sql: SQL): UserStore {
@@ -212,6 +230,19 @@ export function pgUserStore(sql: SQL): UserStore {
     },
     async touchLogin(id, at) {
       await sql.unsafe(`update users set last_login_at = $2 where id = $1`, [id, at]);
+    },
+    async markDeleting(id, at) {
+      return sql.begin(async (tx) => {
+        await tx.unsafe(`select pg_advisory_xact_lock(${USERS_LOCK})`);
+        const [cur] = await tx.unsafe(`select role from users where id = $1 for update`, [id]);
+        if (!cur) return null;
+        if (cur.role === "admin") {
+          const [{ n }] = await tx.unsafe(`select count(*)::int as n from users where role = 'admin'`);
+          if (n <= 1) throw new LastAdminError();
+        }
+        const [r] = await tx.unsafe(`update users set deleting_at = $2 where id = $1 returning ${COLS}`, [id, at]);
+        return toUser(r);
+      });
     },
   };
 }

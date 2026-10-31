@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { LoginRateLimiter } from "../src/auth/rate-limit.ts";
+import { LastAdminError } from "../src/auth/users.ts";
 import { loggedIn, PASSWORD, seedUser, startTestServer, USERNAME } from "./helpers.ts";
 
 let stops: Array<() => unknown> = [];
@@ -124,8 +125,9 @@ describe("users API", () => {
     const { admin } = await twoUsers();
     const list = (await (await admin.call("GET", "/api/users")).json()) as any;
     expect(list.users.map((u: any) => [u.username, u.role])).toEqual([["admin", "admin"], ["bob", "user"]]);
-    expect(Object.keys(list.users[0]).sort()).toEqual(["createdAt", "id", "lastLoginAt", "role", "username"]);
+    expect(Object.keys(list.users[0]).sort()).toEqual(["createdAt", "deletingAt", "id", "lastLoginAt", "role", "username"]);
     expect(list.users.find((u: any) => u.username === "bob").lastLoginAt).toBeTruthy();
+    expect(list.users[0].deletingAt).toBeNull();
 
     const created = await admin.call("POST", "/api/users", { username: "Carol", password: LONG });
     expect(created.status).toBe(201);
@@ -195,6 +197,15 @@ describe("users API", () => {
     expect((await admin.call("DELETE", "/api/users/not-a-uuid")).status).toBe(404);
   });
 
+  test("existing session is rejected after markDeleting", async () => {
+    const { bob, base, users } = await twoUsers();
+    expect((await fetch(`${base}/api/auth/me`, { headers: { cookie: bob.cookie } })).status).toBe(200);
+    await users.markDeleting(bob.user.id, new Date());
+    const res = await fetch(`${base}/api/auth/me`, { headers: { cookie: bob.cookie } });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ message: "Authentication required." });
+  });
+
   test("admin password reset signs the user out and changes the credential", async () => {
     const { admin, bob, base } = await twoUsers();
     const NEW = "brand new reset passphrase";
@@ -213,6 +224,29 @@ describe("users API", () => {
 });
 
 describe("login", () => {
+  test("login is refused once deletion started, exactly like a wrong password", async () => {
+    const { base, users } = start({ limiter: new LoginRateLimiter({ freeAttempts: 1, baseDelayMs: 60_000 }) });
+    const bob = await seedUser(users, "bob", LONG, "user");
+    await users.markDeleting(bob.id, new Date());
+    const res = await post(base, "/api/auth/login", { username: "bob", password: LONG });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ message: "Invalid username or password." });
+    expect(res.headers.get("set-cookie")).toBeNull();
+    // counted toward the backoff (one free attempt, already used)
+    expect((await post(base, "/api/auth/login", { username: USERNAME, password: PASSWORD })).status).toBe(429);
+  });
+
+  test("markDeleting: null for unknown ids; a doomed last admin is never locked out", async () => {
+    const { users } = start();
+    expect(await users.markDeleting(crypto.randomUUID(), new Date())).toBeNull();
+    const [admin] = await users.list();
+    await expect(users.markDeleting(admin!.id, new Date())).rejects.toBeInstanceOf(LastAdminError);
+    const bob = await seedUser(users, "bob", LONG, "user");
+    const at = new Date("2026-10-31T10:00:00Z");
+    expect((await users.markDeleting(bob.id, at))?.deletingAt).toBe(at.toISOString());
+    expect((await users.list()).find((u) => u.id === bob.id)?.deletingAt).toBe(at.toISOString());
+  });
+
   test("no users yet -> 409 needsSetup", async () => {
     const { base } = start({ seedAdmin: false });
     const res = await post(base, "/api/auth/login", { username: "alice", password: LONG });

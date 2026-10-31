@@ -2,7 +2,7 @@
 
 import type { InstanceStore } from "./instances/store.ts";
 import type { JobStore } from "./jobs/store.ts";
-import { createRunManager } from "./runs/manager.ts";
+import { createRunManager, type RunManagerDeps } from "./runs/manager.ts";
 import type { StepExecutor } from "./runs/executor.ts";
 import type { RunStore } from "./runs/store.ts";
 import { createScheduler, type SchedulerDeps } from "./scheduler.ts";
@@ -12,6 +12,7 @@ export type JobRunServicesOptions = {
   jobs: JobStore;
   runs: RunStore;
   executor: StepExecutor;
+  owners: RunManagerDeps["owners"];
   defaultTimezone?: string;
   heartbeatMs?: number;
   scheduler?: Pick<SchedulerDeps, "timers" | "log">;
@@ -21,7 +22,7 @@ export type JobRunServicesOptions = {
 };
 
 export function createJobRunServices(o: JobRunServicesOptions) {
-  const manager = createRunManager({ store: o.runs, jobs: o.jobs, instances: o.instances, executor: o.executor, nowMs: o.nowMs });
+  const manager = createRunManager({ store: o.runs, jobs: o.jobs, instances: o.instances, executor: o.executor, owners: o.owners, nowMs: o.nowMs });
   const scheduler = createScheduler({
     jobs: o.jobs,
     runs: manager,

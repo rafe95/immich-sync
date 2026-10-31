@@ -20,7 +20,7 @@ beforeAll(async () => {
   await writeFile(join(staticDir, "index.html"), "<html>app</html>");
   await writeFile(join(staticDir, "app.js"), "console.log(1)");
   const instanceStore = memoryInstanceStore();
-  const svc = createJobRunServices({ instances: instanceStore, jobs: memoryJobStore(), runs: memoryRunStore(), executor: unwiredExecutor });
+  const svc = createJobRunServices({ instances: instanceStore, jobs: memoryJobStore(), runs: memoryRunStore(), executor: unwiredExecutor, owners: { isDeleting: async () => false } });
   server = createServer({
     port: 0,
     staticDir,

@@ -15,7 +15,7 @@ async function setup() {
   const store = memoryRunStore();
   const jobs = memoryJobStore();
   const executor = new FakeExecutor();
-  const manager = createRunManager({ store, jobs, instances, executor });
+  const manager = createRunManager({ store, jobs, instances, executor, owners: { isDeleting: async () => false } });
   const step = (operation: StepInput["operation"], sourceId: string, targetId: string, over: Partial<StepInput> = {}): StepInput => ({
     operation, sourceId, targetId, onFailure: "continue", onError: "stop", options: { range: null, kind: "all", metadata: true, dryRun: false }, ...over,
   });

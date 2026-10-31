@@ -45,6 +45,24 @@ describe.skipIf(!url)("users (PostgreSQL)", () => {
     await sql!`delete from settings`;
   });
 
+  test("markDeleting: sets deleting_at, null for unknown ids, last admin refused", async () => {
+    await sql!`delete from users`;
+    try {
+      const users = pgUserStore(sql!);
+      const a = await users.create("solo", "h", "admin");
+      await expect(users.markDeleting(a.id, new Date())).rejects.toBeInstanceOf(LastAdminError);
+      expect((await users.get(a.id))?.deletingAt).toBeNull();
+      expect(await users.markDeleting(crypto.randomUUID(), new Date())).toBeNull();
+      const b = await users.create("plain", "h", "user");
+      const at = new Date("2026-10-31T10:00:00Z");
+      expect((await users.markDeleting(b.id, at))?.deletingAt).toBe(at.toISOString());
+      expect((await users.getCredentials("plain"))?.user.deletingAt).toBe(at.toISOString());
+      expect((await users.list()).find((u) => u.id === b.id)?.deletingAt).toBe(at.toISOString());
+    } finally {
+      await sql!`delete from users`;
+    }
+  });
+
   test("store: case-insensitive unique usernames, username check, last-admin rules", async () => {
     const users = pgUserStore(sql!);
     expect(await users.count()).toBe(0);

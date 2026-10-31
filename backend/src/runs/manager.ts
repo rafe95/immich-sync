@@ -29,6 +29,8 @@ export type RunManagerDeps = {
   jobs: JobStore;
   instances: Pick<InstanceStore, "list">;
   executor: StepExecutor;
+  /** Whether an owner's account is being deleted (no new runs are started for them). */
+  owners: { isDeleting(ownerId: string): Promise<boolean> };
   hub?: RunEventHub;
   locks?: InstanceLockManager;
   /** Injectable clock (ms) for progress throttling in tests. */
@@ -90,6 +92,7 @@ export function createRunManager(deps: RunManagerDeps) {
 
     /** Creates the run and starts it in the background; resolves as soon as it is persisted as queued. */
     async start(req: StartRequest): Promise<RunRecord> {
+      if (await deps.owners.isDeleting(req.ownerId)) throw new HttpError(409, "This account is being deleted.");
       const { jobId, name, settings } = await snapshot(req);
       const run = await deps.store.createRun({ ownerId: req.ownerId, jobId, jobName: name, trigger: req.trigger, startedBy: req.startedBy, dryRun: settings.dryRun, settings });
       launch(run);

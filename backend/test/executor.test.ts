@@ -37,7 +37,7 @@ async function setup(source: Fake, target: Fake, over: { sourceKey?: string } = 
   const dst = await instances.create(OWNER, { alias: "dst", apiUrl: target.url, apiKeyEnc: encryptSecret(target.apiKey, SECRET), note: null, isDefault: false });
   const runs = memoryRunStore();
   const executor = createCoreExecutor({ instances: instances.system, secretKey: SECRET });
-  const svc = createJobRunServices({ instances, jobs: memoryJobStore(), runs, executor });
+  const svc = createJobRunServices({ instances, jobs: memoryJobStore(), runs, executor, owners: { isDeleting: async () => false } });
   const step = (operation: StepInput["operation"], options: Partial<StepOptions> = {}): StepInput => ({
     operation, sourceId: src.id, targetId: dst.id, onFailure: "continue", onError: "stop",
     options: { range: null, kind: "all", metadata: false, dryRun: false, ...options },
