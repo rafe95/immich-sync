@@ -17,7 +17,7 @@ export type RunStepSettings = {
   operation: Operation;
   source: { id: string; alias: string };
   target: { id: string; alias: string };
-  options: { range: { from?: string; to?: string } | { lastDays: number } | null; kind: Kind; metadata: boolean; dryRun: boolean };
+  options: { range: { from?: string; to?: string } | { lastDays: number } | null; kind: Kind; metadata: boolean; includeTrashed?: boolean; dryRun: boolean };
 };
 export type Run = {
   id: string;
@@ -44,6 +44,8 @@ export type RunForm = {
   to: string;
   kind: Kind;
   metadata: boolean;
+  /** Also consider assets in the source's trash (copy and sync metadata only). */
+  includeTrashed: boolean;
   dryRun: boolean;
 };
 
@@ -56,6 +58,7 @@ export const defaultForm = (): RunForm => ({
   to: "",
   kind: "all",
   metadata: true,
+  includeTrashed: false,
   dryRun: true,
 });
 
@@ -98,7 +101,14 @@ export function buildRunBody(
           operation: f.operation,
           sourceId: f.sourceId,
           targetId: f.targetId,
-          options: { range, kind: f.kind, metadata: f.operation === "sync_metadata" ? true : f.metadata, dryRun },
+          options: {
+            range,
+            kind: f.kind,
+            metadata: f.operation === "sync_metadata" ? true : f.metadata,
+            // Never sent for a move: it would trash assets that are already in the trash.
+            ...(f.includeTrashed && f.operation !== "move" ? { includeTrashed: true } : {}),
+            dryRun,
+          },
         },
       ],
     },
@@ -120,6 +130,7 @@ export function formFromRun(run: Run): RunForm | null {
     to: r && "to" in r ? (r.to ?? "") : "",
     kind: s.options.kind,
     metadata: s.options.metadata,
+    includeTrashed: s.options.includeTrashed === true,
     dryRun: false,
   };
 }

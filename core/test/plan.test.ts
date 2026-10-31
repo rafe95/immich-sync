@@ -172,6 +172,28 @@ describe("planTransfer", () => {
     await expect(planTransfer(options(source, target, { range: { from: "nope" } }))).rejects.toThrow("valid ISO date");
   });
 
+  test("source trash is ignored by default and included only on request; target trash is still skipped", async () => {
+    const source = fake({ assets: [asset("active"), asset("trashed-source", { isTrashed: true }), asset("also-in-target-trash", { isTrashed: true })] });
+    const target = fake({ assets: [asset("t-also", { checksum: "checksum-also-in-target-trash", isTrashed: true })] });
+
+    const byDefault = await planTransfer(options(source, target));
+    expect(byDefault.assets.map((item) => item.id)).toEqual(["active"]);
+
+    const included = await planTransfer(options(source, target, { includeTrashed: true }));
+    const statuses = Object.fromEntries(included.assets.map((item) => [item.id, item.status]));
+    expect(statuses).toEqual({
+      active: "would-transfer",
+      "trashed-source": "would-transfer",
+      "also-in-target-trash": "in-target-trash",
+    });
+  });
+
+  test("including source trash is refused for a move", async () => {
+    await expect(planTransfer(options(fake(), fake(), { operation: "move", includeTrashed: true }))).rejects.toThrow(
+      "not supported for a move",
+    );
+  });
+
   test("a target lookup failure is isolated to its asset and the preview continues", async () => {
     const source = fake({ assets: [asset("failure"), asset("success")] });
     const target = fake({ searchErrorChecksums: ["checksum-failure"] });

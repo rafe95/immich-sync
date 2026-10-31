@@ -105,7 +105,7 @@
         <p class="text-sm">
           Step {s.position}: {operationLabel(s.operation)} from <strong>{s.source.alias}</strong> to <strong>{s.target.alias}</strong>
           · {s.options.range ? ("lastDays" in s.options.range ? `last ${s.options.range.lastDays} days` : `${"from" in s.options.range && s.options.range.from ? s.options.range.from : "beginning"} to ${"to" in s.options.range && s.options.range.to ? s.options.range.to : "now"}`) : "all dates"}
-          · {s.options.kind}{s.operation === "sync_metadata" ? "" : s.options.metadata ? " · with metadata" : " · without metadata"}
+          · {s.options.kind}{s.operation === "sync_metadata" ? "" : s.options.metadata ? " · with metadata" : " · without metadata"}{s.options.includeTrashed ? " · including source trash" : ""}
           {#if s.options.dryRun}· <em>dry run: no changes on either server</em>{/if}
         </p>
       {/each}

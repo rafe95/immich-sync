@@ -92,6 +92,7 @@
     `${operationLabel(form.operation)} ${form.kind === "all" ? "photos and videos" : form.kind} from ${source?.alias ?? "…"} to ${target?.alias ?? "…"}, ` +
       (form.rangeMode === "all" ? "all dates" : `taken ${form.from ? `from ${form.from}` : ""}${form.from && form.to ? " " : ""}${form.to ? `${form.from ? "to" : "up to"} ${form.to}` : form.from ? "onwards" : ""}`) +
       (form.operation === "sync_metadata" ? ", metadata only" : form.metadata ? ", with metadata" : ", without metadata") +
+      (form.operation !== "move" && form.includeTrashed ? ", including the source's trash" : "") +
       (form.dryRun ? ". Dry run: nothing will change." : "."),
   );
 </script>
@@ -170,6 +171,16 @@
         <input class="checkbox" type="checkbox" bind:checked={form.metadata} disabled={form.operation === "sync_metadata"} />
         <span>Sync metadata{form.operation === "sync_metadata" ? " (always on for this operation)" : ""}</span>
       </label>
+
+      {#if form.operation !== "move"}
+        <label class="flex items-start gap-2">
+          <input class="checkbox mt-1" type="checkbox" bind:checked={form.includeTrashed} />
+          <span>
+            Include assets in the source's trash
+            <span class="block text-sm opacity-70">Off by default. This only affects the source: an asset found only in the target's trash is still skipped, never uploaded again.</span>
+          </span>
+        </label>
+      {/if}
 
       <label class="flex items-start gap-2 rounded-container p-3 {form.dryRun ? 'preset-tonal-success' : 'preset-tonal-warning'}">
         <input class="checkbox mt-1" type="checkbox" bind:checked={form.dryRun} />

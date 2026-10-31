@@ -18,9 +18,13 @@ export type TransferPlanOptions = {
   target: Instance;
   operation: "copy" | "move";
   kind?: "all" | "photos" | "videos";
-  /** A date-taken window; omitting it includes all eligible dates. */
   /** Date-taken window; either end may be left out. Plain dates (2024-01-31) are read as UTC days, `to` inclusive. */
   range?: { from?: string; to?: string };
+  /**
+   * Also consider assets that are in the SOURCE's trash (default false). Only for copy: a move would trash an asset
+   * that is already trashed. This never affects the target: an asset found only in the target's trash is still reported and skipped.
+   */
+  includeTrashed?: boolean;
   /**
    * Plan for a standalone metadata sync (sync_metadata), which classifies assets but never uploads or
    * downloads. The instance checks then require only metadataSyncPermissions (source read; target read
@@ -110,6 +114,9 @@ function validateOptions(options: TransferPlanOptions): void {
     throw new TransferPlanError("Kind must be all, photos or videos.");
   }
   normalizeRange(options.range);
+  if (options.includeTrashed && options.operation === "move") {
+    throw new TransferPlanError("Including source trash is not supported for a move: it would trash assets that are already trashed.");
+  }
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -144,9 +151,9 @@ function normalizedApiUrl(apiUrl: string): string {
 }
 
 
-function isEligibleSourceAsset(asset: AssetResponseDto, ownerId: string): boolean {
+function isEligibleSourceAsset(asset: AssetResponseDto, ownerId: string, includeTrashed: boolean): boolean {
   return asset.ownerId === ownerId &&
-    !asset.isTrashed &&
+    (includeTrashed || !asset.isTrashed) &&
     (asset.visibility === AssetVisibility.Timeline || asset.visibility === AssetVisibility.Archive);
 }
 
@@ -203,6 +210,7 @@ async function discoverSourceAssets(
   instance: Instance,
   kind: NonNullable<TransferPlanOptions["kind"]>,
   range: TransferPlanOptions["range"],
+  includeTrashed: boolean,
 ): Promise<AssetResponseDto[]> {
   const types = kind === "photos"
     ? [AssetTypeEnum.Image]
@@ -212,7 +220,7 @@ async function discoverSourceAssets(
   const found = new Map<string, AssetResponseDto>();
   for (const visibility of [AssetVisibility.Timeline, AssetVisibility.Archive]) {
     for (const type of types) {
-      const assets = await collectAssets(instance, searchFilter(visibility, type, range), false);
+      const assets = await collectAssets(instance, searchFilter(visibility, type, range), includeTrashed);
       for (const asset of assets) found.set(asset.id, asset);
     }
   }
@@ -253,12 +261,13 @@ async function getLivePhotoVideo(
   sourceAssets: Map<string, AssetResponseDto>,
   ownerId: string,
   id: string,
+  includeTrashed: boolean,
 ): Promise<AssetResponseDto> {
   const asset = sourceAssets.get(id) ?? await getAssetInfo({ id }, requestOpts(instance));
   if (asset.id !== id || asset.type !== AssetTypeEnum.Video) {
     throw new TransferPlanError("Live Photo companion is not a video asset.");
   }
-  if (!isEligibleSourceAsset(asset, ownerId)) {
+  if (!isEligibleSourceAsset(asset, ownerId, includeTrashed)) {
     throw new TransferPlanError("Live Photo companion is not an eligible source asset.");
   }
   if (!asset.checksum) throw new TransferPlanError("Live Photo companion has no checksum.");
@@ -294,8 +303,9 @@ async function buildGroups(
   sourceAssets: AssetResponseDto[],
   ownerId: string,
   kind: NonNullable<TransferPlanOptions["kind"]>,
+  includeTrashed: boolean,
 ): Promise<Array<{ primary: AssetResponseDto; components: Array<AssetResponseDto | { id: string; error: string }> }>> {
-  const eligible = sourceAssets.filter((asset) => isEligibleSourceAsset(asset, ownerId));
+  const eligible = sourceAssets.filter((asset) => isEligibleSourceAsset(asset, ownerId, includeTrashed));
   const byId = new Map(eligible.map((asset) => [asset.id, asset]));
   const companionIds = new Set<string>();
   if (kind !== "videos") {
@@ -315,7 +325,7 @@ async function buildGroups(
     const components: Array<AssetResponseDto | { id: string; error: string }> = [asset];
     if (kind !== "videos" && asset.type === AssetTypeEnum.Image && asset.livePhotoVideoId) {
       try {
-        components.push(await getLivePhotoVideo(source, byId, ownerId, asset.livePhotoVideoId));
+        components.push(await getLivePhotoVideo(source, byId, ownerId, asset.livePhotoVideoId, includeTrashed));
       } catch {
         components.push({ id: asset.livePhotoVideoId, error: "Live Photo companion could not be verified." });
       }
@@ -349,14 +359,14 @@ export async function planTransfer(options: TransferPlanOptions): Promise<Transf
 
   let sourceAssets: AssetResponseDto[];
   try {
-    sourceAssets = await discoverSourceAssets(options.source, kind, normalizeRange(options.range));
+    sourceAssets = await discoverSourceAssets(options.source, kind, normalizeRange(options.range), options.includeTrashed === true);
   } catch (error) {
     if (error instanceof TransferPlanError) throw error;
     if (error instanceof AssetSearchError) throw new TransferPlanError(error.message);
     throw new TransferPlanError(`Source asset discovery failed for ${options.source.alias} (${safeRequestError(error)}).`);
   }
 
-  const groups = await buildGroups(options.source, sourceAssets, sourceCheck.user!.id, kind);
+  const groups = await buildGroups(options.source, sourceAssets, sourceCheck.user!.id, kind, options.includeTrashed === true);
   const plannedAssets: PlannedAsset[] = [];
   const events: TransferPlanEvent[] = [];
   const warnings = [PREVIEW_WARNING];

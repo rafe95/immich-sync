@@ -232,6 +232,7 @@ export function createCoreExecutor(deps: CoreExecutorDeps): StepExecutor {
           includeAlbums: o.includeAlbums === true,
           createMissingAlbums: o.createMissingAlbums === true,
           includeTags: o.includeTags === true,
+          includeTrashed: o.includeTrashed === true,
           dryRun: ctx.dryRun,
           signal: ctx.signal,
           onEvent,

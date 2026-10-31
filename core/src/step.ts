@@ -118,6 +118,8 @@ export type StepOptions = {
   target: Instance;
   operation: StepOperation;
   range?: { from?: string; to?: string };
+  /** Also consider assets in the source's trash (copy and sync_metadata only). The target's trash is never affected. */
+  includeTrashed?: boolean;
   kind?: "all" | "photos" | "videos";
   /** copy/move: also sync metadata fields. Implied (and required) for sync_metadata. Default false. */
   metadata?: boolean;
@@ -433,6 +435,7 @@ async function runCopy(options: StepOptions, metadata: boolean, live: Live): Pro
     metadataSync: false,
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.range ? { range: options.range } : {}),
+    ...(options.includeTrashed ? { includeTrashed: true } : {}),
     ...(options.dryRun ? { dryRun: true } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
     // Without metadata an asset's copy result is final: deliver it live. With metadata it is not final
@@ -501,6 +504,7 @@ async function runMove(options: StepOptions, metadata: boolean, live: Live): Pro
     ...metaFlags(options),
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.range ? { range: options.range } : {}),
+    ...(options.includeTrashed ? { includeTrashed: true } : {}),
     ...(options.dryRun ? { dryRun: true } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.dryRun
@@ -556,6 +560,7 @@ async function runSyncMetadata(options: StepOptions, live: Live): Promise<Engine
     metadataSync: metaFlags(options),
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.range ? { range: options.range } : {}),
+    ...(options.includeTrashed ? { includeTrashed: true } : {}),
   });
   const aborted = () => options.signal?.aborted === true;
   const ids = plan.assets.filter((asset) => asset.status === "already-present").map((asset) => asset.id);
@@ -614,10 +619,13 @@ function validate(options: StepOptions): void {
   if (options.operation !== "copy" && options.operation !== "move" && options.operation !== "sync_metadata") {
     throw new TransferPlanError("Operation must be copy, move or sync_metadata.");
   }
-  for (const name of ["metadata", "dryRun", "includeAlbums", "createMissingAlbums", "includeTags"] as const) {
+  for (const name of ["metadata", "dryRun", "includeAlbums", "createMissingAlbums", "includeTags", "includeTrashed"] as const) {
     if (options[name] !== undefined && typeof options[name] !== "boolean") {
       throw new TransferPlanError(`${name} must be a boolean.`);
     }
+  }
+  if (options.operation === "move" && options.includeTrashed) {
+    throw new TransferPlanError("Including source trash is not supported for a move: it would trash assets that are already trashed.");
   }
   if (options.operation === "sync_metadata" && options.metadata === false) {
     throw new TransferPlanError("sync_metadata always synchronizes metadata; metadata cannot be disabled.");

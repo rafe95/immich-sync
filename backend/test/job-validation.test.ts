@@ -49,6 +49,9 @@ describe("job validation", () => {
     expect(validateJobInput(job([step({ options: { range: { from: "2024-01-01" } } })])).steps![0]!.options.range).toEqual({ from: "2024-01-01" });
     expect(validateJobInput(job([step({ options: { range: { from: "2024-01-01", to: "" } } })])).steps![0]!.options.range).toEqual({ from: "2024-01-01" });
     expect(problemsOf(opt({ range: {} })).join()).toContain("needs a from date, a to date, or both");
+    expect(validateJobInput(job([step({ options: { includeTrashed: true } })])).steps![0]!.options.includeTrashed).toBe(true);
+    expect(problemsOf(opt({ includeTrashed: "yes" })).join()).toContain("includeTrashed must be a boolean");
+    expect(problemsOf(() => validateJobInput(job([step({ operation: "move", options: { includeTrashed: true } })]))).join()).toContain("not supported for a move");
     expect(problemsOf(opt({ range: { from: "2024-03-01", to: "2024-02-01" } })).join()).toContain("after");
     expect(problemsOf(opt({ range: { from: "nope", to: "2024-02-01" } })).join()).toContain("ISO date");
     expect(problemsOf(opt({ range: { lastDays: 0 } })).join()).toContain("lastDays");

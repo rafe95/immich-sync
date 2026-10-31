@@ -325,6 +325,7 @@ export async function copyAssets(options: CopyOptions): Promise<TransferPlan | C
     operation: "copy",
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.range ? { range: options.range } : {}),
+    ...(options.includeTrashed ? { includeTrashed: true } : {}),
   };
   const plan = await planTransfer(planOptions);
   if (options.dryRun) return plan;

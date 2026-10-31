@@ -18,6 +18,23 @@ test("form validation: same instance, a window needs from or to (either one is e
   expect(validateForm({ ...f, to: "2024-02-01" })).toEqual([]);
 });
 
+test("body builder: includeTrashed is sent only when ticked and never for a move", () => {
+  const base = { ...defaultForm(), sourceId: A, targetId: B };
+  const options = (f: typeof base) => {
+    const r = buildRunBody(f);
+    if (!r.ok) throw new Error("expected ok");
+    return (r.body.steps as any[])[0].options;
+  };
+  expect(options(base)).not.toHaveProperty("includeTrashed");
+  expect(options({ ...base, includeTrashed: true }).includeTrashed).toBe(true);
+  expect(options({ ...base, includeTrashed: true, operation: "move" })).not.toHaveProperty("includeTrashed");
+});
+
+test("formFromRun keeps includeTrashed from the stored run", () => {
+  const run = { settings: { steps: [{ operation: "copy", source: { id: A }, target: { id: B }, options: { range: null, kind: "all", metadata: true, includeTrashed: true, dryRun: true } }] } } as any;
+  expect(formFromRun(run)?.includeTrashed).toBe(true);
+});
+
 test("body builder: a from-only window sends no to", () => {
   const r = buildRunBody({ ...defaultForm(), sourceId: A, targetId: B, rangeMode: "window", from: "2024-01-01" });
   if (!r.ok) throw new Error("expected ok");
@@ -42,7 +59,7 @@ test("body builder: window, sync_metadata forces metadata, dry run override", ()
 
 test("formFromRun restores settings with dryRun off", () => {
   const run = { settings: { steps: [{ operation: "move", source: { id: A }, target: { id: B }, options: { range: { from: "2024-01-01", to: "2024-02-01" }, kind: "photos", metadata: false, dryRun: true } }] } } as unknown as Run;
-  expect(formFromRun(run)).toEqual({ operation: "move", sourceId: A, targetId: B, rangeMode: "window", from: "2024-01-01", to: "2024-02-01", kind: "photos", metadata: false, dryRun: false });
+  expect(formFromRun(run)).toEqual({ operation: "move", sourceId: A, targetId: B, rangeMode: "window", from: "2024-01-01", to: "2024-02-01", kind: "photos", metadata: false, includeTrashed: false, dryRun: false });
 });
 
 test("reducer: cursor, dedupe on replay, progress, counts", () => {

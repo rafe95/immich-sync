@@ -21,6 +21,8 @@ export type StepOptions = {
   includeAlbums?: boolean;
   createMissingAlbums?: boolean;
   includeTags?: boolean;
+  /** Also consider assets in the source's trash (copy and sync_metadata only). */
+  includeTrashed?: boolean;
   dryRun: boolean;
 };
 
@@ -36,7 +38,7 @@ export type StepInput = {
 export type JobInput = { name: string; steps: StepInput[] };
 
 export const MAX_STEPS = 50;
-const OPTION_KEYS = new Set(["range", "kind", "metadata", "includeAlbums", "createMissingAlbums", "includeTags", "dryRun"]);
+const OPTION_KEYS = new Set(["range", "kind", "metadata", "includeAlbums", "createMissingAlbums", "includeTags", "includeTrashed", "dryRun"]);
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -96,6 +98,11 @@ export function normalizeOptions(raw: unknown, operation: Operation, label: stri
   }
   if ((out.includeAlbums || out.createMissingAlbums || out.includeTags) && !out.metadata) {
     problems.push(`${label}: includeAlbums, createMissingAlbums and includeTags need metadata sync to be enabled.`);
+  }
+  if (raw.includeTrashed !== undefined) {
+    if (typeof raw.includeTrashed !== "boolean") problems.push(`${label}: includeTrashed must be a boolean.`);
+    else if (raw.includeTrashed && operation === "move") problems.push(`${label}: includeTrashed is not supported for a move (it would trash assets that are already trashed).`);
+    else out.includeTrashed = raw.includeTrashed;
   }
   if (out.createMissingAlbums && !out.includeAlbums) problems.push(`${label}: createMissingAlbums requires includeAlbums.`);
   if (raw.dryRun !== undefined) {

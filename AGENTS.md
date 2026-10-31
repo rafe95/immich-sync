@@ -50,7 +50,7 @@ These are hard requirements for any transfer or mutation implementation:
 - Stream original media from source to target; do not persist photo or video payloads in local files or temporary staging. Verify target presence by checksum before considering an asset transferred.
 - Never permanently delete assets. A move may put an asset in the source server's trash **only after** target verification and, when enabled, successful metadata synchronization for that asset.
 - Never re-upload an asset found only in the target's trash; report and skip it. Skip assets already present on the target so reruns remain safe and idempotent.
-- Refuse a source and target that are the same server and same user. Partner-shared assets and trashed source assets are excluded as specified.
+- Refuse a source and target that are the same server and same user. Partner-shared assets are excluded as specified, and trashed source assets are excluded by default; the `includeTrashed` option (copy and `sync_metadata` only, never move) opts in to the source's trash and never changes the target-trash rule above.
 - A failure on one asset should be logged and handled according to the operation's rules without losing already verified work. Cancellation must not trash unverified or half-completed assets.
 - Preserve metadata semantics from `SPEC.md`: source values are applied where they differ, target-only data is not removed, and people/face names are not synced.
 - Keep the backend as the only component that communicates with Immich. Do not return API keys to the browser, include keys or credential-bearing URLs in logs, or weaken the default localhost deployment.
