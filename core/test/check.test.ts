@@ -48,8 +48,8 @@ describe("checkInstance", () => {
     expect(r.version).toBe("v3.3.3");
   });
 
-  test("Immich older than v3.2 is refused", async () => {
-    const f = fake({ version: { major: 3, minor: 1, patch: 9 } });
+  test("Immich older than v3.3 is refused", async () => {
+    const f = fake({ version: { major: 3, minor: 2, patch: 4 } });
     const r = await checkInstance({ alias: "old", apiUrl: f.url, apiKey: f.apiKey });
     expect(r.ok).toBe(false);
     expect(r.error?.stage).toBe("version");

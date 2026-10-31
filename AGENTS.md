@@ -39,7 +39,7 @@ Run focused tests for changed behavior, then `bun test` and `bun run typecheck` 
 
 - Use `@immich/sdk` for Immich API calls. Supply each call with that instance's own `RequestOpts` (`baseUrl` and `x-api-key`); do not use the SDK's global `init()`, because a step talks to source and target servers side by side.
 - An instance represents one server and one user's API key. Validate inputs consistently with `core/src/instance.ts`; aliases and API URLs must not be used to smuggle credentials into logs or browser responses.
-- Require Immich v3.2 or newer as specified. Check endpoint and permission behavior against the supported Immich versions: the exact permission list in `SPEC.md` is explicitly provisional and must be verified rather than assumed.
+- Require Immich v3.3 or newer (the project moved from v3.2 after a real v3.3.5 server showed v3.3 search semantics, e.g. `total` is the page size and `withDeleted` cannot be combined with `filter`; the local `SPEC.md` may still say v3.2). Check endpoint and permission behavior against the supported Immich versions: the exact permission list in `SPEC.md` is explicitly provisional and must be verified rather than assumed.
 - Use per-instance connection and permission checks before a job depends on an instance. For a batch, validate every participating instance before the first step can make changes.
 
 ## Data safety invariants

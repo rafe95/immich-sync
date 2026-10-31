@@ -74,7 +74,7 @@ export async function checkInstance(instance: Instance): Promise<InstanceCheck> 
     return fail("version", err);
   }
   if (result.versionStatus === "unsupported") {
-    return fail("version", new Error(`Immich ${result.version} is not supported; v3.2 or newer is required`));
+    return fail("version", new Error(`Immich ${result.version} is not supported; v3.3 or newer is required`));
   }
   if (result.versionStatus === "untested") {
     result.warnings.push(`Immich ${result.version} is newer than the versions this release was tested with.`);

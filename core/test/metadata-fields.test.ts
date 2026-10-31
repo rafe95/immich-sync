@@ -199,7 +199,7 @@ describe("syncMetadataFields", () => {
 
     const result = await syncMetadataFields(options(source, target, [sourceAsset.id]));
 
-    expect(result.assets[0]).toMatchObject({ status: "failed", message: expect.stringContaining("Immich asset search ended before returning all matching assets") });
+    expect(result.assets[0]).toMatchObject({ status: "failed", message: expect.stringContaining("inconsistent asset search cursor") });
     expect(updateRequests(target)).toHaveLength(0);
   });
 

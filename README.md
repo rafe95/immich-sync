@@ -6,7 +6,7 @@ Copy, move and sync photos and videos between Immich servers you have API keys f
 
 ## Requirements
 
-- Immich **v3.2 or newer** on every server (tested with v3.2.4 and v3.3.x). When source and target run different versions, the app warns before a step runs.
+- Immich **v3.3 or newer** on every server (tested with v3.3.x; v3.2 is not supported). When source and target run different versions, the app warns before a step runs.
 - To run it: Docker with Compose.
 - To develop it: [Bun](https://bun.sh) 1.4+ and Docker (for the development database).
 

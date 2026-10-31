@@ -55,7 +55,7 @@ describe("planTransfer", () => {
       ],
     });
     const target = fake({
-      version: { major: 3, minor: 2, patch: 4 },
+      version: { major: 3, minor: 3, patch: 0 },
       pageSize: 1,
       assets: [
         asset("target-present", { checksum: "checksum-present", ownerId: "target-user" }),
@@ -78,7 +78,7 @@ describe("planTransfer", () => {
     });
     expect(plan.events.some((event) => event.type === "summary")).toBe(true);
     expect(plan.warnings.join(" ")).toContain("Metadata changes are not compared");
-    expect(plan.warnings.join(" ")).toContain("source v3.3.3, target v3.2.4");
+    expect(plan.warnings.join(" ")).toContain("source v3.3.3, target v3.3.0");
     expect(source.requests.some((request) => request.body && (request.body as { cursor?: string }).cursor)).toBe(true);
     // Trash state is stated in the filter; Immich v3.3.5 rejects the deprecated withDeleted flag next to a filter.
     type SearchBody = { withDeleted?: boolean; filter?: { trashedAt?: { eq?: null; ne?: null } } };

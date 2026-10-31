@@ -182,7 +182,7 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
         }
         if (checksum && options.incompleteSearchChecksums?.includes(checksum)) {
           return json({
-            assets: { items: [], count: 0, total: 1, nextCursor: null },
+            assets: { items: [], count: 0, total: 0, nextCursor: "stuck" },
             albums: { items: [], count: 0, total: 0 },
           });
         }
@@ -208,7 +208,8 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
         const items = matching.slice(cursor, cursor + size);
         const nextCursor = cursor + items.length < matching.length ? String(cursor + items.length) : null;
         return json({
-          assets: { items, nextCursor, count: items.length, total: matching.length },
+          // Like Immich v3.3.5: `total` is the size of this page, not of the whole result.
+          assets: { items, nextCursor, count: items.length, total: items.length },
           albums: { items: [], nextCursor: null, count: 0, total: 0 },
         });
       }
