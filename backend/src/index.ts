@@ -1,5 +1,11 @@
 import { ConfigError, loadConfig } from "./config.ts";
+import { pgSessionStore } from "./auth/sessions.ts";
+import { pgInstanceStore } from "./instances/store.ts";
 import { connectDb, migrate } from "./db/index.ts";
+import { pgJobStore } from "./jobs/store.ts";
+import { createCoreExecutor } from "./runs/executor.ts";
+import { pgRunStore, pruneHistory } from "./runs/store.ts";
+import { createJobRunServices } from "./services.ts";
 import { createServer } from "./server.ts";
 
 async function main() {
@@ -18,11 +24,33 @@ async function main() {
   const applied = await migrate(db.sql);
   if (applied.length) console.log(`Database migrations applied: ${applied.join(", ")}`);
 
-  const server = createServer({ port: config.port, staticDir: config.staticDir, db });
-  console.log(`immich-sync listening on http://localhost:${server.port}`);
+  const instanceStore = pgInstanceStore(db.sql);
+  const runStore = pgRunStore(db.sql);
+  const executor = createCoreExecutor({ instances: instanceStore, secretKey: config.secretKey });
+  const services = createJobRunServices({ instances: instanceStore, jobs: pgJobStore(db.sql), runs: runStore, executor });
+  const interrupted = await services.manager.recoverInterrupted();
+  if (interrupted.length) console.log(`Marked ${interrupted.length} run(s) from the previous process as interrupted.`);
+  const pruned = await pruneHistory(runStore);
+  if (pruned) console.log(`Pruned ${pruned} run(s) past the history retention.`);
+
+  const server = createServer({
+    hostname: config.host,
+    port: config.port,
+    staticDir: config.staticDir,
+    db,
+    auth: { adminPassword: config.adminPassword, sessions: pgSessionStore(db.sql), secureCookies: config.cookieSecure },
+    instances: { store: instanceStore, secretKey: config.secretKey },
+    jobs: services.jobs,
+    runs: services.runs,
+  });
+  await services.scheduler.start();
+  console.log(`immich-sync listening on http://${config.host}:${server.port}`);
 
   const shutdown = async () => {
+    services.scheduler.stop();
+    services.manager.abortAll();
     await server.stop();
+    await services.manager.whenIdle();
     await db.close();
     process.exit(0);
   };

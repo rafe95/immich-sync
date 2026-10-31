@@ -1,6 +1,8 @@
 /** Runtime configuration from environment variables (see .env.example and docker-compose.yml). */
 
 export type Config = {
+  /** Interface to listen on; loopback by default, the Docker image sets 0.0.0.0 behind its localhost-only port mapping. */
+  host: string;
   port: number;
   databaseUrl: string;
   adminPassword: string;
@@ -8,6 +10,8 @@ export type Config = {
   secretKey: string;
   /** Built frontend to serve; null in development (Vite serves it). */
   staticDir: string | null;
+  /** Session cookie Secure flag: "auto" follows the request (HTTPS or X-Forwarded-Proto). */
+  cookieSecure: boolean | "auto";
 };
 
 export class ConfigError extends Error {
@@ -39,6 +43,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) problems.push(`PORT is not a valid port: ${portText}`);
 
+  const host = get("HOST") || "127.0.0.1";
+
+  const cookieText = (get("COOKIE_SECURE") || "auto").toLowerCase();
+  if (!["auto", "true", "false"].includes(cookieText)) problems.push("COOKIE_SECURE must be auto, true or false.");
+  const cookieSecure = cookieText === "auto" ? "auto" : cookieText === "true";
+
   if (problems.length) throw new ConfigError(problems);
-  return { port, databaseUrl, adminPassword, secretKey, staticDir: get("STATIC_DIR") || null };
+  return { host, port, databaseUrl, adminPassword, secretKey, staticDir: get("STATIC_DIR") || null, cookieSecure };
 }

@@ -10,12 +10,18 @@ const valid = {
 describe("loadConfig", () => {
   test("valid environment, defaults applied", () => {
     expect(loadConfig(valid)).toEqual({
+      host: "127.0.0.1",
       port: 8080,
       databaseUrl: valid.DATABASE_URL,
       adminPassword: "admin",
       secretKey: valid.SECRET_KEY,
       staticDir: null,
+      cookieSecure: "auto",
     });
+  });
+
+  test("HOST overrides the loopback default", () => {
+    expect(loadConfig({ ...valid, HOST: "0.0.0.0" }).host).toBe("0.0.0.0");
   });
 
   test("every problem is reported at once", () => {

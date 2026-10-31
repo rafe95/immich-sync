@@ -1,6 +1,6 @@
 /**
  * Runs against a real PostgreSQL when TEST_DATABASE_URL is set (e.g. `bun run db:up`, then
- * TEST_DATABASE_URL=postgres://immich_sync:devpassword@localhost:5432/immich_sync bun test).
+ * TEST_DATABASE_URL=postgres://immich_sync:devpassword@localhost:55432/immich_sync bun test).
  * Uses a throwaway schema, so it never touches the app's own tables.
  */
 import { afterAll, describe, expect, test } from "bun:test";
@@ -30,7 +30,7 @@ afterAll(async () => {
 describe.skipIf(!url)("migrations (PostgreSQL)", () => {
   test("apply once, then are a no-op", async () => {
     await sql!.unsafe(`create schema ${schema}`);
-    expect(await migrate(sql!)).toEqual(["0001_init.sql"]);
+    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql"]);
     expect(await migrate(sql!)).toEqual([]);
   });
 
