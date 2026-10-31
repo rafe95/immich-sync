@@ -22,7 +22,7 @@ afterAll(async () => {
 describe.skipIf(!url)("sessions and instances (PostgreSQL)", () => {
   test("migrations create the sessions table", async () => {
     await sql!.unsafe(`create schema ${schema}`);
-    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql", "0003_skipped_runs.sql", "0004_users.sql"]);
+    expect(await migrate(sql!)).toEqual(["0001_init.sql", "0002_sessions.sql", "0003_skipped_runs.sql", "0004_users.sql", "0005_ownership.sql"]);
   });
 
   test("session store: create, get, expire, delete", async () => {
@@ -49,7 +49,16 @@ describe.skipIf(!url)("sessions and instances (PostgreSQL)", () => {
     const enc = encryptSecret("KEY-A", SECRET);
     const a = await store.create({ alias: "a", apiUrl: "http://a/api", apiKeyEnc: enc, note: null, isDefault: true });
     expect(decryptSecret((await store.getKeyEnc(a.id))!, SECRET)).toBe("KEY-A");
-    await expect(store.create({ alias: "a", apiUrl: "http://x/api", apiKeyEnc: enc, note: null, isDefault: false })).rejects.toBeInstanceOf(AliasTakenError);
+    // aliases are unique per owner now (the store has no owner until the ownership work reaches it), so own 'a' via SQL
+    const [owner] = await sql!`insert into users (username, role, password_hash) values ('alias-owner', 'admin', 'x') returning id`;
+    await sql!`update instances set owner_id = ${owner.id} where id = ${a.id}`;
+    let duplicateRejected = false;
+    try {
+      await sql!`insert into instances (alias, api_url, api_key_enc, owner_id) values ('a', 'http://x/api', ${enc}, ${owner.id})`;
+    } catch {
+      duplicateRejected = true;
+    }
+    expect(duplicateRejected).toBe(true);
     const b = await store.create({ alias: "b", apiUrl: "http://b/api", apiKeyEnc: enc, note: "n", isDefault: true });
     expect((await store.list()).filter((i) => i.isDefault).map((i) => i.alias)).toEqual(["b"]);
     await store.saveCheck(b.id, { ok: true }, new Date());

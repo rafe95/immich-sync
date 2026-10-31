@@ -39,7 +39,7 @@ describe.skipIf(!url)("users (PostgreSQL)", () => {
     }
     await sql!`insert into settings (key, value) values ('admin_password_hash', '"x"'::jsonb), ('keep', '1'::jsonb)`;
     await sql!`insert into sessions (id_hash, csrf_token, expires_at) values ('old', 'c', now() + interval '1 day')`;
-    expect(await migrate(sql!)).toEqual(["0004_users.sql"]);
+    expect(await migrate(sql!)).toEqual(["0004_users.sql", "0005_ownership.sql"]);
     expect((await sql!`select key from settings`).map((r: any) => r.key)).toEqual(["keep"]);
     expect(await sql!`select 1 from sessions`).toHaveLength(0);
     await sql!`delete from settings`;
