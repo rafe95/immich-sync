@@ -49,6 +49,8 @@ async function collectPages(instance: Instance, filter: SearchFilter, signal?: A
       { ...requestOpts(instance), signal },
     );
     const page = response.assets;
+    // Numbers only (never cursor values or asset data), so a mismatch with a real server can be diagnosed from the log.
+    const stats = () => `count=${page?.count}, items=${page?.items?.length}, total=${page?.total}, read so far=${itemsRead}, more pages=${page?.nextCursor ? "yes" : "no"}, size=${PAGE_SIZE}`;
     if (
       !Array.isArray(page?.items) ||
       !Number.isInteger(page.count) ||
@@ -57,27 +59,27 @@ async function collectPages(instance: Instance, filter: SearchFilter, signal?: A
       page.total < 0 ||
       (page.nextCursor !== null && typeof page.nextCursor !== "string")
     ) {
-      throw new AssetSearchError("Immich returned an incomplete asset search response.");
+      throw new AssetSearchError(`Immich returned an incomplete asset search response (${stats()}).`);
     }
     if (reportedTotal !== null && page.total !== reportedTotal) {
-      throw new AssetSearchError("Immich asset search total changed during pagination.");
+      throw new AssetSearchError(`Immich asset search total changed during pagination (${stats()}, first total=${reportedTotal}).`);
     }
     reportedTotal = page.total;
     itemsRead += page.count;
-    if (itemsRead > page.total) throw new AssetSearchError("Immich returned inconsistent asset search counts.");
+    if (itemsRead > page.total) throw new AssetSearchError(`Immich returned inconsistent asset search counts (${stats()}).`);
     assets.push(...page.items);
     const nextCursor = page.nextCursor;
     if (nextCursor === null) {
       if (itemsRead !== page.total) {
-        throw new AssetSearchError("Immich asset search ended before returning all matching assets.");
+        throw new AssetSearchError(`Immich asset search ended before returning all matching assets (${stats()}).`);
       }
       break;
     }
     if (page.count === 0 || itemsRead >= page.total) {
-      throw new AssetSearchError("Immich returned an inconsistent asset search cursor.");
+      throw new AssetSearchError(`Immich returned an inconsistent asset search cursor (${stats()}).`);
     }
     if (cursors.has(nextCursor) || nextCursor === cursor) {
-      throw new AssetSearchError("Immich returned a repeated asset search cursor.");
+      throw new AssetSearchError(`Immich returned a repeated asset search cursor (${stats()}).`);
     }
     cursors.add(nextCursor);
     cursor = nextCursor;
