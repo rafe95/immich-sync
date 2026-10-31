@@ -80,9 +80,11 @@ describe("planTransfer", () => {
     expect(plan.warnings.join(" ")).toContain("Metadata changes are not compared");
     expect(plan.warnings.join(" ")).toContain("source v3.3.3, target v3.2.4");
     expect(source.requests.some((request) => request.body && (request.body as { cursor?: string }).cursor)).toBe(true);
-    expect(target.requests.some((request) =>
-      request.body && (request.body as { withDeleted?: boolean }).withDeleted === true,
-    )).toBe(true);
+    // Trash state is stated in the filter; Immich v3.3.5 rejects the deprecated withDeleted flag next to a filter.
+    type SearchBody = { withDeleted?: boolean; filter?: { trashedAt?: { eq?: null; ne?: null } } };
+    const searchBodies = [...source.requests, ...target.requests].map((request) => request.body as SearchBody | undefined);
+    expect(searchBodies.some((body) => body?.filter?.trashedAt?.ne === null)).toBe(true);
+    expect(searchBodies.every((body) => body?.withDeleted === undefined)).toBe(true);
     expect([...source.requests, ...target.requests].every((request) =>
       (request.method === "POST" && request.path === "/api/search/metadata") ||
       (request.method === "GET" && /^\/api\/assets\/[^/]+$/.test(request.path)),

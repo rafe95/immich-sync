@@ -160,12 +160,21 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
           size?: number;
           withDeleted?: boolean;
           filter?: {
+            trashedAt?: { eq?: string | null; ne?: string | null };
             checksum?: { eq?: string };
             takenAt?: { gte?: string; lte?: string };
             type?: { eq?: "IMAGE" | "VIDEO"; in?: Array<"IMAGE" | "VIDEO"> };
             visibility?: { eq?: FakeAsset["visibility"]; in?: FakeAsset["visibility"][] };
           };
         };
+        // Like Immich v3.3.5: the deprecated withDeleted flag cannot be combined with filter.
+        if (search.filter && search.withDeleted !== undefined) {
+          return json({
+            message: "Validation failed",
+            errors: [{ code: "custom", path: ["withDeleted"], message: "Deprecated field withDeleted cannot be combined with filter" }],
+            statusCode: 400,
+          }, 400);
+        }
         const checksum = search.filter?.checksum?.eq;
         options.onMetadataSearch?.(checksum);
         if (checksum && options.searchErrorChecksums?.includes(checksum)) {
@@ -179,7 +188,11 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
         }
         const filter = search.filter;
         const matching = assets.filter((asset) => {
-          if (!search.withDeleted && asset.isTrashed) return false;
+          // Trash state must be stated explicitly: without a trashedAt filter nothing trashed is returned.
+          const trashedFilter = filter?.trashedAt;
+          if (trashedFilter && "eq" in trashedFilter && trashedFilter.eq === null && asset.isTrashed) return false;
+          if (trashedFilter && "ne" in trashedFilter && trashedFilter.ne === null && !asset.isTrashed) return false;
+          if (!trashedFilter && asset.isTrashed) return false;
           if (filter?.checksum?.eq && asset.checksum !== filter.checksum.eq) return false;
           if (filter?.type?.eq && asset.type !== filter.type.eq) return false;
           if (filter?.type?.in && !filter.type.in.includes(asset.type)) return false;

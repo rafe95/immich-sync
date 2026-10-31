@@ -10,12 +10,26 @@ export class AssetSearchError extends Error {
   }
 }
 
+/**
+ * Searches with a `filter`. Trash state is always stated in the filter (`trashedAt`) because Immich (v3.3.5)
+ * rejects the deprecated `withDeleted` flag when it is combined with `filter`, and does not document a default.
+ * With `withDeleted`, active and trashed assets are searched separately, so trashed matches never depend on a default.
+ */
 export async function collectAssets(
   instance: Instance,
   filter: SearchFilter,
   withDeleted: boolean,
   signal?: AbortSignal,
 ): Promise<AssetResponseDto[]> {
+  const active = await collectPages(instance, { ...filter, trashedAt: { eq: null } }, signal);
+  if (!withDeleted) return active;
+  const trashed = await collectPages(instance, { ...filter, trashedAt: { ne: null } }, signal);
+  const byId = new Map<string, AssetResponseDto>();
+  for (const asset of [...active, ...trashed]) byId.set(asset.id, asset);
+  return [...byId.values()];
+}
+
+async function collectPages(instance: Instance, filter: SearchFilter, signal?: AbortSignal): Promise<AssetResponseDto[]> {
   const assets: AssetResponseDto[] = [];
   const cursors = new Set<string>();
   let cursor: string | undefined;
@@ -26,7 +40,6 @@ export async function collectAssets(
     const metadataSearchDto: MetadataSearchDto = {
       filter,
       size: PAGE_SIZE,
-      withDeleted,
       withExif: true,
       withStacked: true,
       ...(cursor ? { cursor } : {}),
