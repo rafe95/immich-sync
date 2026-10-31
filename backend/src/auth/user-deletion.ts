@@ -98,9 +98,9 @@ export function createUserDeletion(deps: UserDeletionDeps) {
       await deps.sessions.deleteForUser(userId);
       await deps.jobs.system.disableSchedules(userId);
 
-      // From here no new start() for this user gets past its deleting check. A start that passed it just before is
-      // still in flight (pendingStarts) and may launch a run after a scan, so scan again until a scan finds neither
-      // active runs nor starts in flight, all within one overall deadline.
+      // cancelOwner retains deletion intent even after this wait times out, so starts already in flight launch aborted.
+      // Still wait for pendingStarts and scan again until neither active runs nor starts remain before erasing data,
+      // all within one overall deadline.
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         const runIds = deps.manager.cancelOwner(userId);

@@ -58,6 +58,8 @@ export function createRunManager(deps: RunManagerDeps) {
   const active = new Map<string, { controller: AbortController; done: Promise<RunStatus>; jobId: string | null; ownerId: string }>();
   /** start() calls in flight, by owner: registered before the deleting check, removed once the run is launched (or refused). */
   const starting = new Map<string, Set<Promise<void>>>();
+  /** Deletion intent outlives its bounded wait, including starts still in flight when it times out. */
+  const deletingOwners = new Set<string>();
   const runnerDeps = { store: deps.store, hub, executor: deps.executor, locks, throttle: new ProgressThrottle(deps.nowMs) };
 
   async function snapshot(req: StartRequest): Promise<{ jobId: string | null; name: string; settings: RunSettings }> {
@@ -96,6 +98,7 @@ export function createRunManager(deps: RunManagerDeps) {
 
   function launch(run: RunRecord): void {
     const controller = new AbortController();
+    if (deletingOwners.has(run.ownerId)) controller.abort();
     const done = executeRun(runnerDeps, run.id, controller.signal).finally(() => active.delete(run.id));
     active.set(run.id, { controller, done, jobId: run.jobId, ownerId: run.ownerId });
   }
@@ -113,7 +116,7 @@ export function createRunManager(deps: RunManagerDeps) {
       const mine = starting.get(req.ownerId) ?? new Set();
       starting.set(req.ownerId, mine.add(inFlight));
       try {
-        if (await deps.owners.isDeleting(req.ownerId)) throw new HttpError(409, "This account is being deleted.");
+        if (deletingOwners.has(req.ownerId) || await deps.owners.isDeleting(req.ownerId)) throw new HttpError(409, "This account is being deleted.");
         const { jobId, name, settings } = await snapshot(req);
         const run = await deps.store.createRun({ ownerId: req.ownerId, jobId, jobName: name, trigger: req.trigger, startedBy: req.startedBy, dryRun: settings.dryRun, settings });
         launch(run);
@@ -152,9 +155,10 @@ export function createRunManager(deps: RunManagerDeps) {
 
     /**
      * User deletion: requests cancellation of every active run (queued or running) owned by `ownerId`, through the
-     * same AbortController path as cancel(); returns their ids.
+     * same AbortController path as cancel(); returns their ids. Retains intent so late starts cannot escape cancellation.
      */
     cancelOwner(ownerId: string): string[] {
+      deletingOwners.add(ownerId);
       const ids: string[] = [];
       for (const [id, e] of active) {
         if (e.ownerId !== ownerId) continue;

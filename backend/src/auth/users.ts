@@ -76,7 +76,7 @@ export function memoryUserStore(): UserStore & { erase(id: string): void } {
   type Row = User & { hash: string };
   const rows = new Map<string, Row>();
   const copy = ({ hash: _h, ...u }: Row): User => ({ ...u });
-  const admins = () => [...rows.values()].filter((r) => r.role === "admin").length;
+  const admins = () => [...rows.values()].filter((r) => r.role === "admin" && r.deletingAt === null).length;
   const byName = (name: string) => [...rows.values()].find((r) => r.username.toLowerCase() === name.toLowerCase());
   // No awaits between check and write below, so each operation is atomic on the single JS thread.
   const insert = (username: string, hash: string, role: Role): Row => {
@@ -116,7 +116,7 @@ export function memoryUserStore(): UserStore & { erase(id: string): void } {
     async update(id, patch) {
       const r = rows.get(id);
       if (!r) return null;
-      if (patch.role && patch.role !== "admin" && r.role === "admin" && admins() <= 1) throw new LastAdminError();
+      if (patch.role && patch.role !== "admin" && r.role === "admin" && r.deletingAt === null && admins() <= 1) throw new LastAdminError();
       if (patch.role) r.role = patch.role;
       if (patch.hash) r.hash = patch.hash;
       return copy(r);
@@ -124,7 +124,7 @@ export function memoryUserStore(): UserStore & { erase(id: string): void } {
     async delete(id) {
       const r = rows.get(id);
       if (!r) return false;
-      if (r.role === "admin" && admins() <= 1) throw new LastAdminError();
+      if (r.role === "admin" && r.deletingAt === null && admins() <= 1) throw new LastAdminError();
       rows.delete(id);
       return true;
     },
@@ -135,7 +135,7 @@ export function memoryUserStore(): UserStore & { erase(id: string): void } {
     async markDeleting(id, at) {
       const r = rows.get(id);
       if (!r) return null;
-      if (r.role === "admin" && admins() <= 1) throw new LastAdminError();
+      if (r.role === "admin" && r.deletingAt === null && admins() <= 1) throw new LastAdminError();
       r.deletingAt = at.toISOString();
       return copy(r);
     },
@@ -208,8 +208,8 @@ export function pgUserStore(sql: SQL): UserStore {
         await tx.unsafe(`select pg_advisory_xact_lock(${USERS_LOCK})`);
         const [cur] = await tx.unsafe(`select ${COLS} from users where id = $1 for update`, [id]);
         if (!cur) return null;
-        if (patch.role && patch.role !== "admin" && cur.role === "admin") {
-          const [{ n }] = await tx.unsafe(`select count(*)::int as n from users where role = 'admin'`);
+        if (patch.role && patch.role !== "admin" && cur.role === "admin" && cur.deleting_at === null) {
+          const [{ n }] = await tx.unsafe(`select count(*)::int as n from users where role = 'admin' and deleting_at is null`);
           if (n <= 1) throw new LastAdminError();
         }
         const [r] = await tx.unsafe(
@@ -222,10 +222,10 @@ export function pgUserStore(sql: SQL): UserStore {
     async delete(id) {
       return sql.begin(async (tx) => {
         await tx.unsafe(`select pg_advisory_xact_lock(${USERS_LOCK})`);
-        const [cur] = await tx.unsafe(`select role from users where id = $1 for update`, [id]);
+        const [cur] = await tx.unsafe(`select role, deleting_at from users where id = $1 for update`, [id]);
         if (!cur) return false;
-        if (cur.role === "admin") {
-          const [{ n }] = await tx.unsafe(`select count(*)::int as n from users where role = 'admin'`);
+        if (cur.role === "admin" && cur.deleting_at === null) {
+          const [{ n }] = await tx.unsafe(`select count(*)::int as n from users where role = 'admin' and deleting_at is null`);
           if (n <= 1) throw new LastAdminError();
         }
         await tx.unsafe(`delete from users where id = $1`, [id]); // sessions go with it (on delete cascade)
@@ -238,10 +238,10 @@ export function pgUserStore(sql: SQL): UserStore {
     async markDeleting(id, at) {
       return sql.begin(async (tx) => {
         await tx.unsafe(`select pg_advisory_xact_lock(${USERS_LOCK})`);
-        const [cur] = await tx.unsafe(`select role from users where id = $1 for update`, [id]);
+        const [cur] = await tx.unsafe(`select role, deleting_at from users where id = $1 for update`, [id]);
         if (!cur) return null;
-        if (cur.role === "admin") {
-          const [{ n }] = await tx.unsafe(`select count(*)::int as n from users where role = 'admin'`);
+        if (cur.role === "admin" && cur.deleting_at === null) {
+          const [{ n }] = await tx.unsafe(`select count(*)::int as n from users where role = 'admin' and deleting_at is null`);
           if (n <= 1) throw new LastAdminError();
         }
         const [r] = await tx.unsafe(`update users set deleting_at = $2 where id = $1 returning ${COLS}`, [id, at]);

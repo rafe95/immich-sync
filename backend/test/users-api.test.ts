@@ -437,6 +437,74 @@ describe("deleting a user", () => {
 });
 
 describe("user deletion service", () => {
+  test("a delayed launch after the deletion timeout stays cancelled and retains data until retry", async () => {
+    const users = memoryUserStore();
+    const sessions = memorySessionStore();
+    const instances = memoryInstanceStore();
+    const jobs = memoryJobStore();
+    const runs = memoryRunStore();
+    const executor = new FakeExecutor();
+    const bob = await seedUser(users, "bob", "bobs long passphrase", "user");
+    const admin = await seedUser(users, "root", "roots long passphrase", "admin");
+    const mk = async (alias: string) => (await instances.create(bob.id, { alias, apiUrl: `http://${alias}/api`, apiKeyEnc: Buffer.from("x"), note: null, isDefault: false })).id;
+    const [s, d] = [await mk("s"), await mk("d")];
+    const job = await jobs.create(bob.id, { name: "late", steps: [{ operation: "copy", sourceId: s, targetId: d, options: { range: { lastDays: 1 }, kind: "photos", metadata: true, dryRun: false }, onFailure: "continue", onError: "stop" }] });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let checked!: () => void;
+    const checkRead = new Promise<void>((r) => (checked = r));
+    let hold = false;
+    const manager = createRunManager({ store: runs, jobs, instances, executor, owners: {
+      isDeleting: async (id) => {
+        const deleting = (await users.get(id))?.deletingAt != null;
+        if (hold) {
+          hold = false;
+          checked();
+          await held;
+        }
+        return deleting;
+      },
+    } });
+    const request = { job: { id: job.id }, trigger: "manual" as const, ownerId: bob.id, startedBy: "bob", dryRun: false };
+    const history = await manager.start(request);
+    await manager.whenIdle();
+    const callsBefore = executor.calls.length;
+    const eventsBefore = runs.events.filter((e) => e.runId === history.id);
+    hold = true;
+    const late = manager.start(request);
+    await checkRead;
+    expect(manager.pendingStarts(bob.id)).toHaveLength(1);
+    const inner = memoryUserDataEraser({ users, instances, jobs, runs });
+    const erased: string[] = [];
+    const deletion = createUserDeletion({ users, sessions, jobs, manager, timeoutMs: 50, eraser: {
+      counts: inner.counts,
+      erase: async (id) => { erased.push(id); await inner.erase(id); },
+    } });
+    // "stopping" maps to HTTP 409; do not release the stale false answer until after the deadline.
+    expect(await deletion.remove(admin.id, bob.id)).toBe("stopping");
+    expect(erased).toEqual([]);
+    expect((await users.get(bob.id))?.deletingAt).toBeTruthy();
+    expect(await inner.counts(bob.id)).toEqual({ instances: 2, jobs: 1, runs: 1 });
+    expect(runs.events.filter((e) => e.runId === history.id)).toEqual(eventsBefore);
+
+    release();
+    const run = await late;
+    await manager.whenIdle();
+    expect(executor.calls).toHaveLength(callsBefore);
+    expect((await runs.system.getRun(run.id))?.status).toBe("cancelled");
+    expect(manager.pendingStarts(bob.id)).toEqual([]);
+    await expect(manager.start(request)).rejects.toThrow("being deleted");
+    expect(erased).toEqual([]);
+    expect(await inner.counts(bob.id)).toEqual({ instances: 2, jobs: 1, runs: 2 });
+    expect((await runs.system.getRun(history.id))?.status).toBe("completed");
+    expect(runs.events.filter((e) => e.runId === history.id)).toEqual(eventsBefore);
+    expect(await deletion.remove(admin.id, bob.id)).toBe("deleted");
+    expect(erased).toEqual([bob.id]);
+    expect(await users.get(bob.id)).toBeNull();
+    expect(await inner.counts(bob.id)).toEqual({ instances: 0, jobs: 0, runs: 0 });
+    expect(runs.events).toEqual([]);
+  });
+
   test("a run launched between cancelling and erasing is caught", async () => {
     const users = memoryUserStore();
     const sessions = memorySessionStore();
