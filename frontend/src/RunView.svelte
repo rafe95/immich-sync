@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Console from "./Console.svelte";
+  import { createRunEvents, type RunEvents } from "./lib/runEvents.svelte.ts";
   import { api } from "./lib/session.svelte.ts";
   import { formFromRun, isTerminal, logAsJson, logAsText, operationLabel, statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
 
@@ -83,6 +84,16 @@
     await load();
   }
 
+  // One event stream per run, handed to the console (and later the diagram).
+  let events = $state<RunEvents | null>(null);
+  $effect(() => {
+    if (!mode) return;
+    const e = createRunEvents(api, runId, mode, () => void ended());
+    events = e;
+    e.start();
+    return () => e.stop();
+  });
+
   const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
   const summaryEntries = (v: unknown): [string, unknown][] => (isObj(v) ? Object.entries(v).filter(([, x]) => typeof x === "number" || typeof x === "string") : []);
 </script>
@@ -124,8 +135,8 @@
     </div>
   {/if}
 
-  {#if mode}
-    {#key runId}<Console {runId} {mode} onend={ended} />{/key}
+  {#if events}
+    <Console {events} />
   {/if}
 
   {#if run && finished}

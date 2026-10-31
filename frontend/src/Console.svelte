@@ -1,20 +1,14 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { api } from "./lib/session.svelte.ts";
-  import {
-    assetOf, eventText, formatBytes, lineVisible, stepSummaries, eventsUrl, initialConsole, progressPercent, reconnectDelay, reduceEvents, statusLabel,
-    type ConsoleState, type EventLevel, type RunEvent, type RunStatus,
-  } from "./lib/runs.ts";
+  import type { RunEvents } from "./lib/runEvents.svelte.ts";
+  import { assetOf, eventText, formatBytes, lineVisible, stepSummaries, progressPercent, statusLabel, type EventLevel } from "./lib/runs.ts";
 
-  /**
-   * Shared console: "live" streams /api/runs/:id/events (SSE, resumes after the last event id);
-   * "replay" reads the stored log. Closing this component never affects the run.
-   */
-  let { runId, mode, onend }: { runId: string; mode: "live" | "replay"; onend?: (status: RunStatus) => void } = $props();
+  /** Shared console over one run's event stream (created by the parent). Closing it never affects the run. */
+  let { events, stepFilter = null }: { events: RunEvents; stepFilter?: number | null } = $props();
 
-  let cs = $state<ConsoleState>(initialConsole());
-  let connection = $state<"connecting" | "live" | "reconnecting" | "closed">("connecting");
-  let loadError = $state<string | null>(null);
+  const cs = $derived(events.state);
+  const connection = $derived(events.connection);
+  const loadError = $derived(events.loadError);
   let minLevel = $state<EventLevel>("info");
   let showAssets = $state(true);
   let failuresOnly = $state(false);
@@ -23,26 +17,13 @@
 
   const rank: Record<EventLevel, number> = { debug: 0, info: 1, warning: 2, error: 3 };
   const levelCls: Record<EventLevel, string> = { debug: "opacity-60", info: "", warning: "text-warning-600-400", error: "text-error-600-400" };
-  const visible = $derived(cs.events.filter((e) => lineVisible(e, { minRank: rank[minLevel], rank: rank[e.level], showAssets, failuresOnly })));
+  const stepOf = (e: { data: unknown }) => (e.data && typeof e.data === "object" && typeof (e.data as { step?: unknown }).step === "number" ? (e.data as { step: number }).step : null);
+  const visible = $derived(cs.events.filter((e) => (stepFilter === null || stepOf(e) === stepFilter) && lineVisible(e, { minRank: rank[minLevel], rank: rank[e.level], showAssets, failuresOnly })));
   const blocks = $derived(stepSummaries(cs.summaries, cs.failures));
-  const finishedRun = $derived(cs.endStatus !== null || (mode === "replay" && connection === "closed"));
+  const finishedRun = $derived(cs.endStatus !== null || connection === "closed");
   const percent = $derived(progressPercent(cs.progress));
   const outcomeCounts = $derived(Object.entries(cs.counts));
   const time = (iso: string) => new Date(iso).toLocaleTimeString();
-
-  // Events are buffered and applied in one batch so a fast log doesn't re-render per line.
-  let buffer: RunEvent[] = [];
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  function push(events: RunEvent[]) {
-    buffer.push(...events);
-    flushTimer ??= setTimeout(flush, 100);
-  }
-  function flush() {
-    flushTimer = null;
-    if (!buffer.length) return;
-    cs = reduceEvents(cs, buffer);
-    buffer = [];
-  }
 
   $effect(() => {
     void visible.length;
@@ -58,103 +39,8 @@
     if (logEl) logEl.scrollTop = logEl.scrollHeight;
   }
 
-  $effect(() => {
-    const id = runId;
-    cs = initialConsole();
-    buffer = [];
-    loadError = null;
-    connection = "connecting";
-    following = true;
-    let stopped = false;
-    let es: EventSource | null = null;
-    let retry: ReturnType<typeof setTimeout> | null = null;
-    let attempt = 0;
-    // Cursor owned by this connection loop; the reducer also ignores anything at or below it.
-    let cursor = 0;
-
-    const finish = (status: RunStatus) => {
-      flush();
-      connection = "closed";
-      cs = { ...cs, endStatus: status };
-      onend?.(status);
-    };
-
-    async function replay() {
-      try {
-        let after = 0;
-        for (;;) {
-          const page = await api.getRunLog(id, after);
-          if (stopped) return;
-          push(page.events);
-          if (page.events.length < 1000 || page.nextAfter === null) break;
-          after = page.nextAfter;
-        }
-        flush();
-        connection = "closed";
-      } catch (e) {
-        loadError = e instanceof Error ? e.message : String(e);
-        connection = "closed";
-      }
-    }
-
-    function connect() {
-      if (stopped) return;
-      es = new EventSource(eventsUrl(id, cursor), { withCredentials: true });
-      es.onopen = () => {
-        connection = "live";
-        attempt = 0;
-      };
-      es.onmessage = (m) => {
-        try {
-          const e = JSON.parse(m.data) as RunEvent;
-          cursor = Math.max(cursor, e.id);
-          push([e]);
-        } catch {
-          /* ignore malformed frame */
-        }
-      };
-      es.addEventListener("end", (m) => {
-        let status: RunStatus = "completed";
-        try {
-          status = (JSON.parse((m as MessageEvent).data) as { status: RunStatus }).status;
-        } catch {
-          /* keep default; the run record is authoritative */
-        }
-        es?.close();
-        stopped = true;
-        finish(status);
-      });
-      es.onerror = () => {
-        // The browser would retry on its own, but a closed source or a lost session needs handling here.
-        es?.close();
-        if (stopped) return;
-        connection = "reconnecting";
-        // A 401 is detected by asking the API; the client then flips the app to the login screen.
-        api.getRun(id).catch((e) => {
-          if (e && (e as { status?: number }).status === 404) {
-            loadError = "This run no longer exists.";
-            stopped = true;
-            connection = "closed";
-          }
-        });
-        retry = setTimeout(connect, reconnectDelay(attempt++));
-      };
-    }
-
-    if (mode === "replay") void replay();
-    else connect();
-
-    return () => {
-      stopped = true;
-      es?.close();
-      if (retry) clearTimeout(retry);
-      if (flushTimer) clearTimeout(flushTimer);
-      flushTimer = null;
-    };
-  });
-
   const connLabel = $derived(
-    cs.endStatus ? `Run ${statusLabel(cs.endStatus)}` : { connecting: "Connecting…", live: "Live", reconnecting: "Connection lost, reconnecting…", closed: mode === "replay" ? "Stored log" : "Disconnected" }[connection],
+    cs.endStatus ? `Run ${statusLabel(cs.endStatus)}` : { connecting: "Connecting…", live: "Live", reconnecting: "Connection lost, reconnecting…", closed: "Stored log or ended" }[connection],
   );
 </script>
 
