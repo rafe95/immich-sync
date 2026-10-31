@@ -32,13 +32,15 @@ Then open http://localhost:8080.
 
 There is no admin password in the environment. Open the app: while no user exists you are sent to `/setup` to create the first account, which becomes an administrator; after that `/setup` is closed (`POST /api/setup` answers 409 and creates nothing). Administrators manage accounts under `/api/users` (create, change role, reset a password, delete); the `user` role can use everything except user management and the history-retention setting. The last administrator cannot be deleted or demoted, and nobody can delete their own account. Usernames are 3-64 characters (letters, digits, `.`, `_`, `-`), unique ignoring case; passwords are 12-256 characters and stored as argon2id hashes. Changing your own password (Settings, `POST /api/auth/password`) or having it reset by an administrator signs out that user's other sessions.
 
-Forgotten the only admin password? Reset it through the database. The simplest safe recovery re-opens first-run setup, which also deletes every account and ends all sessions (instances, jobs, runs and history are kept):
+### Data ownership and upgrades
 
-```bash
-docker compose exec db psql -U immich_sync -d immich_sync -c 'delete from users;'   # podman compose works the same
-```
+Every account, administrators included, sees and manages only its own instances, jobs, schedules, runs, history, logs and dashboard. Aliases and the default instance are per user. A job may only use that user's instances. Administrators have no access to other users' data; their extra powers are account management and the global history-retention setting.
 
-Then open the app and create a new first admin at `/setup`. Do this only on a deployment you control; until you finish setup, anyone who can reach the app could claim the admin account, so keep it on localhost meanwhile.
+Deleting an account first locks it out, ends its sessions, disables its schedules and cancels its runs. Once those runs stop, all its app data (instances, jobs, schedules, runs, history and logs) is permanently erased. The Users screen previews the counts before confirmation. **Nothing on any Immich server is touched.** If runs have not stopped within 30 seconds, deletion returns 409, keeps the data and leaves the account locked out; retry deletion after the runs stop. The last usable administrator cannot be deleted or demoted, even if another admin is already being deleted.
+
+On upgrade, existing rows are assigned to the oldest administrator. If no user exists yet, ownerless rows stay hidden until first-run setup assigns them to the new first administrator in the same transaction. Later setup attempts cannot claim or reassign data. Back up the database before upgrading.
+
+Forgotten the only admin password? Recover that existing account through a database administrator: stop the app, back up the database, replace that account's `users.password_hash` with a fresh argon2id hash generated with the parameters in `backend/src/auth/auth.ts`, and delete its sessions before restarting. Do not delete accounts to reopen setup: ownership foreign keys intentionally prevent it, and account deletion through the API erases the account's app data. Do not clear `deleting_at` to undo a deletion in progress. Keep the deployment on localhost during recovery.
 
 Failed logins (and failed password confirmations) back off per client address; behind a reverse proxy every request shares the proxy's address, so set `TRUST_PROXY=true` (default `false`) to key the backoff on the first `X-Forwarded-For` hop. Enable it only when a proxy you control sets that header and the app is not reachable directly, otherwise clients can spoof it. A leftover `ADMIN_PASSWORD` in an old `.env` is ignored.
 

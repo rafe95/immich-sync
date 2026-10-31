@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { createUserBody, isAdmin, isSetupPath, lastLoginText, loginBody, newUserProblems, setupProblems, usernameProblem } from "./users.ts";
+import { createUserBody, deletionWarning, isAdmin, isSetupPath, lastLoginText, loginBody, newUserProblems, setupProblems, usernameProblem } from "./users.ts";
+
+test("deletion warning names all erased data and Immich safety", () => {
+  expect(deletionWarning("bob", { instances: 2, jobs: 3, runs: 4 })).toBe(
+    "Delete bob? This cancels their running jobs and permanently deletes their 2 instances, 3 jobs (including schedules), and 4 runs (including history and logs). Nothing on any Immich server is touched.",
+  );
+  expect(deletionWarning("empty", { instances: 0, jobs: 0, runs: 0 })).toContain("0 instances, 0 jobs");
+});
 
 test("username rules", () => {
   expect(usernameProblem("al")).not.toBeNull();

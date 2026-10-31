@@ -1,5 +1,5 @@
 /** Pure helpers for first-run setup and the Users screen; limits mirror the backend contract. */
-import type { SessionUser, UserRole } from "./api.ts";
+import type { SessionUser, UserDataCounts, UserRole } from "./api.ts";
 
 export const MIN_USERNAME_LENGTH = 3;
 export const MAX_USERNAME_LENGTH = 64;
@@ -60,6 +60,10 @@ export const isSetupPath = (pathname: string): boolean => pathname.replace(/\/+$
 
 export function roleLabel(role: UserRole): string {
   return role === "admin" ? "Admin" : "User";
+}
+
+export function deletionWarning(username: string, counts: UserDataCounts): string {
+  return `Delete ${username}? This cancels their running jobs and permanently deletes their ${counts.instances} instances, ${counts.jobs} jobs (including schedules), and ${counts.runs} runs (including history and logs). Nothing on any Immich server is touched.`;
 }
 
 /** "Never" for a user who has not signed in yet. */

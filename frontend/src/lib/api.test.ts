@@ -80,6 +80,18 @@ test("login sends username and password; needsSetup is surfaced on the error", a
   expect(err.needsSetup).toBe(true);
 });
 
+test("user deletion preview gets counts and propagates errors", async () => {
+  const { f, calls } = fake([
+    { status: 200, body: { instances: 2, jobs: 3, runs: 4 } },
+    { status: 404, body: { message: "User not found." } },
+  ]);
+  const api = createApiClient({ fetch: f });
+  expect(await api.getUserData("a b")).toEqual({ instances: 2, jobs: 3, runs: 4 });
+  expect(calls[0]!.url).toBe("/api/users/a%20b/data");
+  expect(calls[0]!.init.method).toBe("GET");
+  await expect(api.getUserData("missing")).rejects.toMatchObject({ status: 404, message: "User not found." });
+});
+
 test("setup stores the csrf token and user admin calls use the contract paths", async () => {
   const { f, calls } = fake([
     { status: 201, body: { authenticated: true, csrfToken: "s", user: { id: "1", username: "root", role: "admin" } } },

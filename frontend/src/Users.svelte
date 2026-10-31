@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { UserRecord, UserRole } from "./lib/api.ts";
+  import type { UserDataCounts, UserRecord, UserRole } from "./lib/api.ts";
   import { api, session } from "./lib/session.svelte.ts";
-  import { createUserBody, lastLoginText, newPasswordProblem, newUserProblems, roleLabel, ROLES, MIN_PASSWORD_LENGTH } from "./lib/users.ts";
+  import { createUserBody, deletionWarning, lastLoginText, newPasswordProblem, newUserProblems, roleLabel, ROLES, MIN_PASSWORD_LENGTH } from "./lib/users.ts";
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -86,13 +86,36 @@
   }
 
   let confirmDeleteId = $state<string | null>(null);
+  let deleteCounts = $state<UserDataCounts | null>(null);
+  let deleteError = $state<string | null>(null);
+  let previewRequest = 0;
+  function closeDelete() {
+    previewRequest++;
+    confirmDeleteId = null;
+    deleteCounts = null;
+    deleteError = null;
+  }
+  async function previewDelete(u: UserRecord) {
+    const request = ++previewRequest;
+    confirmDeleteId = u.id;
+    resetId = null;
+    deleteCounts = null;
+    deleteError = null;
+    try {
+      const counts = await api.getUserData(u.id);
+      if (request === previewRequest) deleteCounts = counts;
+    } catch (err) {
+      if (request === previewRequest) deleteError = msg(err);
+    }
+  }
   async function remove(u: UserRecord) {
+    if (confirmDeleteId !== u.id || !deleteCounts || busyId !== null) return;
     notice = null;
     busyId = u.id;
     try {
       await api.deleteUser(u.id);
       notice = { kind: "ok", text: `User ${u.username} deleted.` };
-      confirmDeleteId = null;
+      closeDelete();
       await load();
     } catch (err) {
       notice = { kind: "error", text: msg(err) };
@@ -137,14 +160,21 @@
                 </select>
               </label>
               <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId === u.id}
-                onclick={() => { resetId = resetId === u.id ? null : u.id; resetPw = ""; resetProblem = null; confirmDeleteId = null; }}
+                onclick={() => { resetId = resetId === u.id ? null : u.id; resetPw = ""; resetProblem = null; closeDelete(); }}
                 aria-expanded={resetId === u.id}>Reset password</button>
               {#if confirmDeleteId === u.id}
-                <span class="text-sm">Delete {u.username}?</span>
-                <button class="btn btn-sm preset-filled-error-500" type="button" disabled={busyId === u.id} onclick={() => remove(u)}>Confirm delete</button>
-                <button class="btn btn-sm preset-tonal-surface" type="button" onclick={() => (confirmDeleteId = null)}>Cancel</button>
+                {#if deleteCounts}
+                  <p class="w-full text-sm" role="status">{deletionWarning(u.username, deleteCounts)}</p>
+                {:else if deleteError}
+                  <p class="w-full text-sm text-error-500" role="alert">Could not load deletion counts: {deleteError}</p>
+                  <button class="btn btn-sm preset-tonal-surface" type="button" onclick={() => previewDelete(u)}>Retry preview</button>
+                {:else}
+                  <p class="w-full text-sm" role="status">Loading deletion counts…</p>
+                {/if}
+                <button class="btn btn-sm preset-filled-error-500" type="button" disabled={busyId !== null || !deleteCounts} onclick={() => remove(u)}>Confirm delete</button>
+                <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId !== null} onclick={closeDelete}>Cancel</button>
               {:else}
-                <button class="btn btn-sm preset-tonal-error" type="button" disabled={busyId === u.id} onclick={() => { confirmDeleteId = u.id; resetId = null; }}>Delete</button>
+                <button class="btn btn-sm preset-tonal-error" type="button" disabled={busyId !== null} onclick={() => previewDelete(u)}>Delete</button>
               {/if}
             </div>
             {#if resetId === u.id}

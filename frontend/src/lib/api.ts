@@ -35,6 +35,7 @@ export type InstanceInput = { alias?: string; apiUrl?: string; apiKey?: string; 
 export type UserRole = "admin" | "user";
 export type SessionUser = { id: string; username: string; role: UserRole };
 export type UserRecord = { id: string; username: string; role: UserRole; createdAt: string; lastLoginAt: string | null };
+export type UserDataCounts = { instances: number; jobs: number; runs: number };
 export type AuthResponse = { authenticated?: boolean; csrfToken: string; user?: SessionUser };
 
 export class ApiError extends Error {
@@ -127,6 +128,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
     createUser: async (body: { username: string; password: string; role?: UserRole }) =>
       (await request<{ user: UserRecord }>("POST", "/api/users", body)).user,
     updateUser: (id: string, body: { role?: UserRole; password?: string }) => request<{ user?: UserRecord }>("PATCH", `/api/users/${encodeURIComponent(id)}`, body),
+    getUserData: (id: string) => request<UserDataCounts>("GET", `/api/users/${encodeURIComponent(id)}/data`),
     deleteUser: (id: string) => request<unknown>("DELETE", `/api/users/${encodeURIComponent(id)}`),
     getRetention: async () => (await request<{ days: number }>("GET", "/api/settings/retention")).days,
     putRetention: async (days: number) => (await request<{ days: number }>("PUT", "/api/settings/retention", { days })).days,

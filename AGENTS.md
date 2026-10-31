@@ -55,6 +55,13 @@ These are hard requirements for any transfer or mutation implementation:
 - Preserve metadata semantics from `SPEC.md`: source values are applied where they differ, target-only data is not removed, and people/face names are not synced.
 - Keep the backend as the only component that communicates with Immich. Do not return API keys to the browser, include keys or credential-bearing URLs in logs, or weaken the default localhost deployment.
 
+## Account ownership
+
+- Every user, including admins, can access only their own instances, jobs, schedules, runs, events and dashboard. Admin privileges add only user management and the global retention setting; they do not bypass ownership.
+- Pass the authenticated owner to request-facing stores and run starts. Keep scheduler/executor system operations explicitly separate. Check run ownership before reading events, SSE or cancellation; return 404 for foreign ids. Jobs may use only their owner's instances. Aliases and defaults are per owner.
+- Deleting a user locks them out, ends sessions, disables schedules, cancels and waits for runs (including starts in flight), then transactionally erases their app data. Timeout returns 409 and keeps both the data and lockout for retry. Never touch Immich as part of account deletion. Count only non-deleting admins for last-admin protection.
+- Migration 0005 assigns legacy rows to the oldest admin; when no user exists, nullable owners are claimed atomically by first-run setup. Ordinary account creation or a closed setup must never claim/reassign rows.
+
 ## Jobs, persistence, and logs
 
 When implementing the planned job system, use `SPEC.md` as the behavior contract:
