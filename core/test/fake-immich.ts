@@ -9,6 +9,8 @@ export type FakeImmichOptions = {
   user?: { id: string; email: string; name: string };
   assets?: FakeAsset[];
   searchErrorChecksums?: string[];
+  /** Every metadata search answers 400 with this validation message (as a real server does for a rejected request). */
+  rejectSearchWith?: string;
   incompleteSearchChecksums?: string[];
   assetInfoFailures?: string[];
   downloadFailures?: string[];
@@ -149,6 +151,9 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
 
       if (!authed(req)) return unauthorized();
 
+      if (req.method === "POST" && path === "/api/search/metadata" && options.rejectSearchWith) {
+        return json({ message: [options.rejectSearchWith], error: "Bad Request", statusCode: 400 }, 400);
+      }
       if (req.method === "POST" && path === "/api/search/metadata") {
         const search = body as {
           cursor?: string;

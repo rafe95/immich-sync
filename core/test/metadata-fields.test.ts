@@ -356,6 +356,6 @@ describe("syncMetadataFields date taken with time zone", () => {
 
     const result = await syncMetadataFields(options(source, target, [sourceAsset.id]));
 
-    expect(result.assets[0]).toMatchObject({ status: "failed", message: "HTTP 500" });
+    expect(result.assets[0]).toMatchObject({ status: "failed", message: "HTTP 500: Asset update failed" });
   });
 });

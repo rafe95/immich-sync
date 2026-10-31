@@ -1,8 +1,8 @@
+import { describeHttpError } from "./http-error.ts";
 import {
   AssetTypeEnum,
   AssetVisibility,
   getAssetInfo,
-  isHttpError,
   type AssetResponseDto,
 } from "@immich/sdk";
 import { findAssetsByChecksum } from "./asset-search.ts";
@@ -93,7 +93,8 @@ export type CopyResult = {
 type TargetState = { active: AssetResponseDto | null; trashed: boolean };
 
 function safeError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return "request failed";
 }
 

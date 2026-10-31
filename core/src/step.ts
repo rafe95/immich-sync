@@ -6,6 +6,7 @@
  * those are reported as status "error".
  */
 
+import { describeHttpError } from "./http-error.ts";
 import { getAssetInfo, isHttpError } from "@immich/sdk";
 import { AssetSearchError } from "./asset-search.ts";
 import { copyAssets, type CopyAssetResult, type CopyOptions, type TransferProgress } from "./copy.ts";
@@ -191,7 +192,8 @@ function safeMessage(error: unknown): string {
   if (error instanceof TransferPlanError || error instanceof MetadataFieldsError || error instanceof AssetSearchError) {
     return error.message;
   }
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return "Step failed unexpectedly.";
 }
 

@@ -1,10 +1,10 @@
 /** Read-only transfer planning for copy and move operations. */
 
+import { describeHttpError } from "./http-error.ts";
 import {
   AssetTypeEnum,
   AssetVisibility,
   getAssetInfo,
-  isHttpError,
   type AssetResponseDto,
   type SearchFilter,
 } from "@immich/sdk";
@@ -91,7 +91,8 @@ const PREVIEW_WARNING =
   "Metadata changes are not compared by this transfer-only preview. No files are uploaded or trashed.";
 
 function safeRequestError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   if (error instanceof AssetSearchError) return error.message;
   return "request failed";
 }

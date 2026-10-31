@@ -1,7 +1,7 @@
+import { describeHttpError } from "./http-error.ts";
 import {
   AssetVisibility,
   getAssetInfo,
-  isHttpError,
   updateAsset,
   type AssetResponseDto,
   type UpdateAssetDto,
@@ -114,7 +114,8 @@ const TAG_SCOPE_WARNING =
   "With includeTags enabled, source tags are added to the target asset by exact value, creating missing target tags; target-only tags are preserved.";
 
 function safeError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return error instanceof Error ? error.message : "request failed";
 }
 

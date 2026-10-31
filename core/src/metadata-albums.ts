@@ -1,8 +1,8 @@
+import { describeHttpError } from "./http-error.ts";
 import {
   addAssetsToAlbums,
   createAlbum,
   getAllAlbums,
-  isHttpError,
   type AlbumResponseDto,
 } from "@immich/sdk";
 import { requestOpts, type Instance } from "./instance.ts";
@@ -115,7 +115,8 @@ export async function planAlbumMembershipAdditions(
 }
 
 function safeAlbumError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return error instanceof Error ? error.message : "Album request failed.";
 }
 

@@ -1,4 +1,5 @@
-import { bulkTagAssets, getAllTags, isHttpError, upsertTags, type TagResponseDto } from "@immich/sdk";
+import { describeHttpError } from "./http-error.ts";
+import { bulkTagAssets, getAllTags, upsertTags, type TagResponseDto } from "@immich/sdk";
 import { requestOpts, type Instance } from "./instance.ts";
 
 export type TagAdditionPlan = {
@@ -71,7 +72,8 @@ export async function planTagAdditions(
 }
 
 function safeTagError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return error instanceof Error ? error.message : "Tag request failed.";
 }
 

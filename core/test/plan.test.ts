@@ -132,6 +132,15 @@ describe("planTransfer", () => {
     })).toBe(true);
   });
 
+  test("a rejected source search reports the server's validation message", async () => {
+    const source = fake({ rejectSearchWith: "filter.takenAt must be a valid date" });
+    const target = fake();
+
+    await expect(planTransfer(options(source, target))).rejects.toThrow(
+      "Source asset discovery failed for source (HTTP 400: filter.takenAt must be a valid date).",
+    );
+  });
+
   test("a target lookup failure is isolated to its asset and the preview continues", async () => {
     const source = fake({ assets: [asset("failure"), asset("success")] });
     const target = fake({ searchErrorChecksums: ["checksum-failure"] });

@@ -3,7 +3,8 @@
  * then trash (never permanently delete) on the source for each fully verified asset.
  */
 
-import { deleteAssets, isHttpError } from "@immich/sdk";
+import { describeHttpError } from "./http-error.ts";
+import { deleteAssets } from "@immich/sdk";
 import { findAssetsByChecksum } from "./asset-search.ts";
 import { copyAssets, type CopyAssetResult, type CopyAssetStatus, type TransferProgress } from "./copy.ts";
 import { requestOpts, type Instance } from "./instance.ts";
@@ -98,7 +99,8 @@ export type MoveResult = {
 };
 
 function safeError(error: unknown): string {
-  if (isHttpError(error)) return `HTTP ${error.status}`;
+  const http = describeHttpError(error);
+  if (http) return http;
   return "request failed";
 }
 
