@@ -32,6 +32,7 @@
   // At most one panel is open: a job (edge), an instance (node or list row), or the add form.
   let selectedJobId = $state<string | null>(null);
   let selectedStep = $state(1);
+  let selectedRunId = $state<string | null>(null);
   let selectedInstanceId = $state<string | null>(null);
   let adding = $state(false);
   let checkingAll = $state(false);
@@ -49,6 +50,7 @@
     nodes = [...placed, { ...addInstanceNode(), position: placeholderPosition(placed.map((n) => n.position)), data: { onadd: startAdd } }];
     edges = built.edges.map((e) => {
       const jobId = e.data?.jobId;
+      const runId = e.data?.runId;
       const position = Number(e.id.split(":").pop()) || 1;
       const color = { primary: "var(--color-primary-500)", warning: "var(--color-warning-500)", tertiary: "var(--color-tertiary-500)", neutral: "var(--color-surface-500)" }[e.data?.style === "warning" ? "warning" : (e.data?.tone ?? "neutral")];
       // zIndex lifts the line and its label above the instance cards, which sit close together on a small map.
@@ -56,33 +58,44 @@
         ...e,
         zIndex: 1000,
         markerEnd: { type: MarkerType.ArrowClosed, color },
-        data: { ...e.data!, onselect: jobId ? () => selectJob(jobId, position) : undefined },
-        selected: selectedJobId !== null && jobId === selectedJobId,
+        data: { ...e.data!, onselect: jobId ? () => selectJob(jobId, position) : runId ? () => selectRun(runId) : undefined },
+        selected: (selectedJobId !== null && jobId === selectedJobId) || (selectedRunId !== null && runId === selectedRunId),
       };
     });
   });
 
   const job = $derived(map.jobs.find((j) => j.id === selectedJobId) ?? null);
+  const adhoc = $derived(map.active.find((a) => a.run.id === selectedRunId) ?? null);
   const instance = $derived(map.instances.find((i) => i.id === selectedInstanceId) ?? null);
 
+  function selectRun(id: string) {
+    selectedRunId = id;
+    selectedJobId = null;
+    selectedInstanceId = null;
+    adding = false;
+  }
   function selectJob(id: string | null, position = 1) {
+    selectedRunId = null;
     selectedJobId = id;
     selectedStep = position;
     selectedInstanceId = null;
     adding = false;
   }
   function selectInstance(id: string) {
+    selectedRunId = null;
     selectedInstanceId = id;
     selectedJobId = null;
     adding = false;
   }
   function startAdd() {
     adding = true;
+    selectedRunId = null;
     selectedInstanceId = null;
     selectedJobId = null;
   }
   function closePanels() {
     adding = false;
+    selectedRunId = null;
     selectedInstanceId = null;
     selectedJobId = null;
   }
@@ -166,7 +179,11 @@
               fitMaxZoom={1.4}
               {nodeTypes}
               onnodeclick={(n) => n.type === "instance" && !n.id.startsWith("unknown:") && selectInstance(n.id)}
-              onedgeclick={(e) => selectJob((e.data as { jobId?: string } | undefined)?.jobId ?? null, Number(e.id.split(":").pop()) || 1)}
+              onedgeclick={(e) => {
+                const d = e.data as { jobId?: string; runId?: string } | undefined;
+                if (d?.runId) selectRun(d.runId);
+                else selectJob(d?.jobId ?? null, Number(e.id.split(":").pop()) || 1);
+              }}
               onnodedragstop={dragStop}
             />
             </div>
@@ -183,6 +200,8 @@
         <MapInstancePanel instance={null} {map} {onchanged} {onsaved} {ondeleted} onclose={closePanels} />
       {:else if instance}
         <MapInstancePanel {instance} {map} {onchanged} {onsaved} {ondeleted} onclose={closePanels} />
+      {:else if adhoc}
+        <MapJobPanel job={null} adhocRunId={adhoc.run.id} {map} {onopenrun} eventsFor={(id) => live.get(id)} {onchanged} onclose={closePanels} />
       {:else if job}
         <MapJobPanel {job} step={selectedStep} {map} {onopenrun} {onopenjob} eventsFor={(id) => live.get(id)} {onchanged} onclose={closePanels} />
       {:else}

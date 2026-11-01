@@ -152,3 +152,14 @@ test("a live step overrides the run record's running step, so the percentage lan
   const preflight = run({ steps: twoSteps.steps.map((s) => ({ ...s, status: "pending" })) });
   expect(buildMap(input({ jobs: [j], active: [{ run: preflight, percent: 20, queued: false, step: 1 }] })).edges.map((e) => e.data!.label)).toEqual(["Nightly · 20%", "Nightly · not scheduled"]);
 });
+
+test("a running ad-hoc run draws a temporary line with its percentage and marks the nodes", () => {
+  const adhoc = run({
+    id: "r9", jobName: "Copy a to b", settings: { name: "Copy a to b", dryRun: true, steps: [{ position: 1, operation: "copy", source: { id: "a", alias: "a" }, target: { id: "b", alias: "b" }, options: { range: null, kind: "all", metadata: true, dryRun: true } }] },
+  });
+  const { nodes, edges } = buildMap(input({ active: [{ run: adhoc, percent: 40, queued: false }] }));
+  expect(edges).toHaveLength(1);
+  expect(edges[0]).toMatchObject({ id: "run:r9:1", source: "a", target: "b", data: { label: "Copy a to b · 40%", style: "running", runId: "r9" } });
+  expect(nodes.find((n) => n.id === "b")!.data.activity).toMatchObject({ kind: "lock" });
+  expect(nodes.find((n) => n.id === "a")!.data.activity).toMatchObject({ kind: "reading" });
+});

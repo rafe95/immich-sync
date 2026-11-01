@@ -33,4 +33,4 @@ export type StepNodeData = {
   orientation: "vertical" | "horizontal";
 };
 
-export type LabelEdgeData = { label: string; tone: OpTone | "neutral"; style: EdgeStyle; icon?: "on-error"; jobId?: string; /** Edges between the same two nodes are drawn in separate lanes (0 = first) so lines and labels do not stack. */ lane?: number; /** Makes the label clickable (the line itself is a thin target). Set by the view, not by the graph builders. */ onselect?: () => void };
+export type LabelEdgeData = { label: string; tone: OpTone | "neutral"; style: EdgeStyle; icon?: "on-error"; jobId?: string; /** Set on the line of a running ad-hoc run (one started from the Run screen, not from a saved job). */ runId?: string; /** Edges between the same two nodes are drawn in separate lanes (0 = first) so lines and labels do not stack. */ lane?: number; /** Makes the label clickable (the line itself is a thin target). Set by the view, not by the graph builders. */ onselect?: () => void };
