@@ -15,6 +15,7 @@
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tailwindcss/vite": "4.3.3",
     "@tsconfig/svelte": "5.0.8",
+    "@xyflow/svelte": "1.7.0",
     "svelte": "5.57.2",
     "svelte-check": "4.7.6",
     "tailwindcss": "4.3.3",

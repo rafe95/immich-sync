@@ -141,3 +141,15 @@ test("a skipped schedule firing is terminal, filterable and has a neutral badge"
   expect(statusClass("failed")).toBe("preset-tonal-error");
   expect(statusClass("completed")).toBe("preset-tonal-success");
 });
+
+test("a stream split at any point (reconnect resuming from lastId, with replayed overlap) equals the unsplit stream", () => {
+  const all = Array.from({ length: 12 }, (_, i) =>
+    i % 3 === 0 ? ev(i + 1, { type: "asset", data: { step: 1, asset: { fileName: `f${i}`, outcome: i % 2 ? "failed" : "copied" } } }) : ev(i + 1, { type: "progress", data: { done: i, total: 12 } }),
+  );
+  const whole = reduceEvents(initialConsole(), all);
+  for (let cut = 0; cut <= all.length; cut++) {
+    const first = reduceEvents(initialConsole(), all.slice(0, cut));
+    const resumed = reduceEvents(first, all.slice(Math.max(0, cut - 2))); // server replays a little overlap
+    expect(resumed).toEqual(whole);
+  }
+});

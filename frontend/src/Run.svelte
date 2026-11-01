@@ -106,7 +106,7 @@
     <p class="text-error-500" role="alert">Could not load instances: {loadError}</p>
     <button type="button" class="btn preset-tonal-surface" onclick={load}>Retry</button>
   {:else if instances.length < 2}
-    <p class="opacity-70">A run needs two different instances. Register them on the Instances screen first.</p>
+    <p class="opacity-70">A run needs two different instances. Register them on the Dashboard first.</p>
   {:else}
     <form class="card preset-outlined-surface-200-800 max-w-3xl space-y-4 p-4" onsubmit={(e) => { e.preventDefault(); submit(form.dryRun); }} aria-labelledby="run-form-title">
       <h2 id="run-form-title" class="h5">One-off operation</h2>

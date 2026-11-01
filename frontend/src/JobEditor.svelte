@@ -1,9 +1,19 @@
 <script lang="ts">
   import { ApiError, type Instance } from "./lib/api.ts";
   import { api } from "./lib/session.svelte.ts";
-  import { buildJobBody, defaultStep, duplicateStep, MAX_STEPS, moveItem, normalizeStepForm, OP_LABEL, stepFromRecord, stepSummary, validateStep, type JobRecord, type StepForm } from "./lib/jobs.ts";
+  import { buildJobBody, defaultStep, duplicateStep, MAX_STEPS, normalizeStepForm, stepFromRecord, type JobRecord, type StepForm } from "./lib/jobs.ts";
+  import type { Operation } from "./lib/runs.ts";
+  import { reorderByY, scheduleWarning, stepProblems } from "./lib/flow/pipeline.ts";
+  import JobPipeline from "./flow/JobPipeline.svelte";
+  import StepPanel from "./flow/StepPanel.svelte";
 
-  let { job, instances, onsaved, oncancel }: { job: JobRecord | null; instances: Instance[]; onsaved: (job: JobRecord) => void; oncancel: () => void } = $props();
+  let {
+    job,
+    instances,
+    onsaved,
+    oncancel,
+    oneditschedule,
+  }: { job: JobRecord | null; instances: Instance[]; onsaved: (job: JobRecord) => void; oncancel: () => void; oneditschedule?: () => void } = $props();
 
   // Mounted fresh per edit, so the initial value is what we want.
   // svelte-ignore state_referenced_locally
@@ -14,26 +24,38 @@
   let saving = $state(false);
   let announce = $state("");
 
-  const alias = (id: string) => instances.find((i) => i.id === id)?.alias ?? "…";
-  const optionLabel = (i: Instance) => `${i.alias}${i.lastCheck === null ? " · not checked" : i.lastCheck.ok ? " · OK" : " · check failed"}`;
+  // svelte-ignore state_referenced_locally
+  let selectedKey = $state<string | null>(steps[0]?.key ?? null);
+  const selectedIndex = $derived(steps.findIndex((s) => s.key === selectedKey));
+  const selected = $derived(selectedIndex >= 0 ? steps[selectedIndex]! : null);
+  const warning = $derived(scheduleWarning(job?.schedule ?? null, steps));
+  const allProblems = $derived([...steps.flatMap((s, i) => stepProblems(s, i, instances)), ...(warning ? [warning] : [])]);
 
   function update(i: number, patch: Partial<StepForm>) {
     steps[i] = normalizeStepForm({ ...steps[i]!, ...patch });
   }
-  function move(i: number, to: number) {
-    steps = moveItem(steps, i, to);
-    announce = `Step moved to position ${to + 1} of ${steps.length}.`;
-  }
   function remove(i: number) {
     steps = steps.filter((_, k) => k !== i);
+    selectedKey = steps[Math.min(i, steps.length - 1)]?.key ?? null;
     announce = `Step ${i + 1} removed.`;
   }
-  function add() {
-    const last = steps.at(-1);
-    steps = [...steps, defaultStep({ sourceId: last?.targetId ?? "", targetId: "" })];
+  function addAt(operation: Operation, index: number) {
+    if (steps.length >= MAX_STEPS) return;
+    const prev = steps[index - 1];
+    const step = normalizeStepForm(defaultStep({ operation, sourceId: prev?.targetId ?? "", targetId: "" }));
+    steps = [...steps.slice(0, index), step, ...steps.slice(index)];
+    selectedKey = step.key;
+    announce = `Step added at position ${index + 1}.`;
+  }
+  function reorder(key: string, y: number) {
+    const next = reorderByY(steps, key, y);
+    steps = next;
+    announce = `Step moved to position ${next.findIndex((s) => s.key === key) + 1} of ${next.length}.`;
   }
   function duplicate(i: number) {
-    steps = [...steps.slice(0, i + 1), duplicateStep(steps[i]!), ...steps.slice(i + 1)];
+    const copy = duplicateStep(steps[i]!);
+    steps = [...steps.slice(0, i + 1), copy, ...steps.slice(i + 1)];
+    selectedKey = copy.key;
   }
 
   async function save(e: SubmitEvent) {
@@ -55,7 +77,7 @@
   }
 </script>
 
-<form class="card preset-outlined-surface-200-800 max-w-4xl space-y-4 p-4" onsubmit={save} aria-labelledby="job-form-title">
+<form class="card preset-outlined-surface-200-800 max-w-6xl space-y-4 p-4" onsubmit={save} aria-labelledby="job-form-title">
   <h2 id="job-form-title" class="h5">{job ? `Edit "${job.name}"` : "New job"}</h2>
 
   <label class="label max-w-md">
@@ -65,115 +87,42 @@
 
   <p class="sr-only" role="status" aria-live="polite">{announce}</p>
 
-  <ol class="space-y-4">
-    {#each steps as s, i (s.key)}
-      {@const problems = validateStep(s, i)}
-      <li class="card preset-tonal-surface space-y-3 p-3">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <h3 class="font-semibold">Step {i + 1}</h3>
-          <div class="flex flex-wrap gap-1">
-            <button type="button" class="btn btn-sm preset-tonal-surface" disabled={i === 0} onclick={() => move(i, i - 1)} aria-label="Move step {i + 1} up">Up</button>
-            <button type="button" class="btn btn-sm preset-tonal-surface" disabled={i === steps.length - 1} onclick={() => move(i, i + 1)} aria-label="Move step {i + 1} down">Down</button>
-            <button type="button" class="btn btn-sm preset-tonal-surface" disabled={steps.length >= MAX_STEPS} onclick={() => duplicate(i)} aria-label="Duplicate step {i + 1}">Duplicate</button>
-            <button type="button" class="btn btn-sm preset-tonal-error" disabled={steps.length === 1} onclick={() => remove(i)} aria-label="Remove step {i + 1}">Remove</button>
-          </div>
-        </div>
-        <p class="text-sm opacity-80">{stepSummary(s, alias)}</p>
+  <JobPipeline
+    {steps}
+    schedule={job?.schedule ?? null}
+    {instances}
+    {selectedKey}
+    onselect={(k) => (selectedKey = k)}
+    onadd={addAt}
+    onreorder={reorder}
+    oneditschedule={job && oneditschedule ? oneditschedule : undefined}
+  />
+  {#if job && oneditschedule}<p class="text-xs opacity-70">Editing the schedule leaves this form; unsaved step changes are discarded.</p>{/if}
 
-        <fieldset class="space-y-1">
-          <legend class="label-text">Operation</legend>
-          <div class="flex flex-wrap gap-4">
-            {#each Object.entries(OP_LABEL) as [value, label] (value)}
-              <label class="flex items-center gap-2"><input class="radio" type="radio" name="op-{s.key}" {value} checked={s.operation === value} onchange={() => update(i, { operation: value as StepForm["operation"] })} /> {label}</label>
-            {/each}
-          </div>
-          {#if s.operation === "move"}
-            <p class="text-sm opacity-80">Move verifies each asset on the target, then sends the source asset to the source's trash. Nothing is permanently deleted.</p>
-          {/if}
-        </fieldset>
+  {#if selected}
+    <StepPanel
+      step={selected}
+      index={selectedIndex}
+      count={steps.length}
+      {instances}
+      problems={stepProblems(selected, selectedIndex, instances)}
+      canDuplicate={steps.length < MAX_STEPS}
+      onchange={(patch) => update(selectedIndex, patch)}
+      onduplicate={() => duplicate(selectedIndex)}
+      onremove={() => remove(selectedIndex)}
+    />
+  {:else}
+    <p class="text-sm opacity-70">Select a step to edit its settings.</p>
+  {/if}
 
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="label"><span class="label-text">Source</span>
-            <select class="select" value={s.sourceId} onchange={(e) => update(i, { sourceId: e.currentTarget.value })} required>
-              <option value="" disabled>Choose…</option>
-              {#each instances as inst (inst.id)}<option value={inst.id}>{optionLabel(inst)}</option>{/each}
-            </select>
-          </label>
-          <label class="label"><span class="label-text">Target</span>
-            <select class="select" value={s.targetId} onchange={(e) => update(i, { targetId: e.currentTarget.value })} required>
-              <option value="" disabled>Choose…</option>
-              {#each instances as inst (inst.id)}<option value={inst.id}>{optionLabel(inst)}</option>{/each}
-            </select>
-          </label>
-        </div>
-
-        <fieldset class="space-y-2">
-          <legend class="label-text">Date taken</legend>
-          <div class="flex flex-wrap gap-4">
-            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range-{s.key}" value="all" bind:group={s.rangeMode} /> All assets</label>
-            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range-{s.key}" value="window" bind:group={s.rangeMode} /> Date window</label>
-            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range-{s.key}" value="lastDays" bind:group={s.rangeMode} /> Last N days</label>
-          </div>
-          {#if s.rangeMode === "window"}
-            <div class="grid gap-3 sm:grid-cols-2">
-              <label class="label"><span class="label-text">From (optional)</span><input class="input" type="date" bind:value={s.from} /></label>
-              <label class="label"><span class="label-text">To (optional)</span><input class="input" type="date" bind:value={s.to} /></label>
-            </div>
-            <p class="text-xs opacity-70">Set one or both. A fixed window suits a one-off job; a recurring job usually wants all assets or the last N days.</p>
-          {:else if s.rangeMode === "lastDays"}
-            <label class="label max-w-xs"><span class="label-text">Days back from the run time</span><input class="input" type="number" min="1" max="36500" step="1" bind:value={s.lastDays} /></label>
-          {/if}
-        </fieldset>
-
-        <label class="label max-w-xs"><span class="label-text">Kind</span>
-          <select class="select" bind:value={s.kind}>
-            <option value="all">Photos and videos</option>
-            <option value="photos">Photos only</option>
-            <option value="videos">Videos only</option>
-          </select>
-        </label>
-
-        <div class="space-y-2">
-          <label class="flex items-center gap-2">
-            <input class="checkbox" type="checkbox" checked={s.metadata} disabled={s.operation === "sync_metadata"} onchange={(e) => update(i, { metadata: e.currentTarget.checked })} />
-            <span>Sync metadata{s.operation === "sync_metadata" ? " (always on for this operation)" : ""}</span>
-          </label>
-          <div class="ml-6 space-y-1">
-            <label class="flex items-center gap-2"><input class="checkbox" type="checkbox" checked={s.includeAlbums} disabled={!s.metadata} onchange={(e) => update(i, { includeAlbums: e.currentTarget.checked })} /> Add to matching albums (by exact name, additive)</label>
-            <label class="ml-6 flex items-center gap-2"><input class="checkbox" type="checkbox" checked={s.createMissingAlbums} disabled={!s.metadata || !s.includeAlbums} onchange={(e) => update(i, { createMissingAlbums: e.currentTarget.checked })} /> Create albums missing on the target</label>
-            <label class="flex items-center gap-2"><input class="checkbox" type="checkbox" checked={s.includeTags} disabled={!s.metadata} onchange={(e) => update(i, { includeTags: e.currentTarget.checked })} /> Sync tags (additive)</label>
-          </div>
-          {#if s.operation !== "move"}
-            <label class="flex items-start gap-2">
-              <input class="checkbox mt-1" type="checkbox" checked={s.includeTrashed} onchange={(e) => update(i, { includeTrashed: e.currentTarget.checked })} />
-              <span>Include assets in the source's trash <span class="block text-xs opacity-70">Never offered for a move. Assets found only in the target's trash are still skipped.</span></span>
-            </label>
-          {/if}
-        </div>
-
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="label"><span class="label-text">If some assets fail in this step</span>
-            <select class="select" bind:value={s.onFailure}>
-              <option value="continue">Continue with the next step</option>
-              <option value="stop">Stop the job</option>
-            </select>
-          </label>
-          <label class="label"><span class="label-text">If this step cannot run (server down, key rejected)</span>
-            <select class="select" bind:value={s.onError}>
-              <option value="stop">Stop the job; later steps are not run</option>
-              <option value="continue">Continue anyway</option>
-            </select>
-          </label>
-        </div>
-
-        {#if problems.length}
-          <ul class="list-disc pl-5 text-sm text-warning-700-300">{#each problems as p (p)}<li>{p}</li>{/each}</ul>
-        {/if}
-      </li>
-    {/each}
-  </ol>
-
-  <button type="button" class="btn preset-tonal-primary" disabled={steps.length >= MAX_STEPS} onclick={add}>Add step</button>
+  <section class="card preset-tonal-surface space-y-1 p-3" aria-label="Checks">
+    <h3 class="font-semibold">Checks</h3>
+    {#if allProblems.length}
+      <ul class="list-disc pl-5 text-sm text-warning-700-300">{#each allProblems as p (p)}<li>{p}</li>{/each}</ul>
+    {:else}
+      <p class="text-sm">No problems found.</p>
+    {/if}
+  </section>
 
   {#if errors.length}
     <ul class="list-disc pl-5 text-sm text-error-500" role="alert">{#each errors as p (p)}<li>{p}</li>{/each}</ul>

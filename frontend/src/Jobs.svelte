@@ -7,7 +7,7 @@
   import { statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
   import { api } from "./lib/session.svelte.ts";
 
-  let { onrun }: { onrun: (runId: string) => void } = $props();
+  let { onrun, openJobId = $bindable(null) }: { onrun: (runId: string) => void; openJobId?: string | null } = $props();
 
   let jobs = $state<JobRecord[]>([]);
   let instances = $state<Instance[]>([]);
@@ -40,7 +40,14 @@
       loading = false;
     }
   }
-  onMount(load);
+  // "Open job" on the dashboard map lands here with the job to edit.
+  onMount(async () => {
+    await load();
+    const wanted = openJobId;
+    openJobId = null;
+    const job = wanted ? jobs.find((j) => j.id === wanted) : undefined;
+    if (job) mode = { kind: "edit", job };
+  });
 
   async function start(job: JobRecord, dryRun: boolean) {
     busyId = job.id;
@@ -89,6 +96,12 @@
     jobs = jobs.map((j) => (j.id === jobId ? { ...j, schedule: s } : j));
   }
 
+  const editSchedule = $derived.by(() => {
+    const m = mode;
+    const job = m.kind === "edit" ? m.job : null;
+    return job ? () => (mode = { kind: "schedule", jobId: job.id }) : undefined;
+  });
+
   const editingSchedule = $derived.by(() => {
     const m = mode;
     return m.kind === "schedule" ? (jobs.find((j) => j.id === m.jobId) ?? null) : null;
@@ -101,7 +114,7 @@
   {#if notice}<p class="text-sm" role="status">{notice}</p>{/if}
 
   {#if mode.kind === "edit"}
-    <JobEditor job={mode.job} {instances} onsaved={saved} oncancel={() => (mode = { kind: "list" })} />
+    <JobEditor job={mode.job} {instances} onsaved={saved} oncancel={() => (mode = { kind: "list" })} oneditschedule={editSchedule} />
   {:else if mode.kind === "schedule" && editingSchedule}
     <ScheduleEditor job={editingSchedule} onsaved={(s) => scheduleSaved(editingSchedule.id, s)} onclose={() => { mode = { kind: "list" }; void load(); }} />
   {:else if loading}
@@ -112,7 +125,7 @@
   {:else}
     <div>
       <button type="button" class="btn preset-filled-primary-500" disabled={instances.length < 2} onclick={() => (mode = { kind: "edit", job: null })}>New job</button>
-      {#if instances.length < 2}<span class="ml-2 text-sm opacity-70">A job needs two registered instances (Instances screen).</span>{/if}
+      {#if instances.length < 2}<span class="ml-2 text-sm opacity-70">A job needs two registered instances (add them on the Dashboard).</span>{/if}
     </div>
 
     {#if jobs.length === 0}

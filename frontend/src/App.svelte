@@ -4,7 +4,6 @@
   import { checkSession, logout, session } from "./lib/session.svelte.ts";
   import Dashboard from "./Dashboard.svelte";
   import Jobs from "./Jobs.svelte";
-  import Instances from "./Instances.svelte";
   import Setup from "./Setup.svelte";
   import Users from "./Users.svelte";
   import { isAdmin } from "./lib/users.ts";
@@ -20,7 +19,6 @@
     { id: "run", label: "Run", enabled: true },
     { id: "jobs", label: "Jobs", enabled: true },
     { id: "history", label: "History", enabled: true },
-    { id: "instances", label: "Instances", enabled: true },
     { id: "users", label: "Users", enabled: true },
     { id: "settings", label: "Settings", enabled: true },
   ] as const;
@@ -32,6 +30,8 @@
   // Held here so leaving the Run or History screen and coming back keeps the run on screen (the run itself never depends on the page).
   let activeRunId = $state<string | null>(null);
   let historyRunId = $state<string | null>(null);
+  // Set by the dashboard map's "Open job"; the Jobs screen opens that job's editor and clears it.
+  let openJobId = $state<string | null>(null);
   let prefill = $state<RunForm | null>(null);
   function runRealFromHistory(run: RunRecord) {
     prefill = formFromRun(run);
@@ -53,7 +53,7 @@
   $effect(() => {
     if (session.status === "anonymous") {
       current = "dashboard";
-      activeRunId = historyRunId = prefill = null;
+      activeRunId = historyRunId = prefill = openJobId = null;
     }
   });
 </script>
@@ -107,9 +107,7 @@
       </nav>
 
       <main class="space-y-4 p-6">
-        {#if current === "instances"}
-          <Instances />
-        {:else if current === "users" && isAdmin(session.user)}
+        {#if current === "users" && isAdmin(session.user)}
           <Users />
         {:else if current === "settings"}
           <Settings />
@@ -118,9 +116,9 @@
         {:else if current === "history"}
           <History bind:openId={historyRunId} onrunreal={runRealFromHistory} />
         {:else if current === "jobs"}
-          <Jobs onrun={(id) => { activeRunId = id; prefill = null; current = "run"; }} />
+          <Jobs bind:openJobId onrun={(id) => { activeRunId = id; prefill = null; current = "run"; }} />
         {:else}
-          <Dashboard onopenrun={(id) => { historyRunId = id; current = "history"; }} />
+          <Dashboard onopenrun={(id) => { historyRunId = id; current = "history"; }} onopenjob={(id) => { openJobId = id; current = "jobs"; }} />
         {/if}
       </main>
     </div>

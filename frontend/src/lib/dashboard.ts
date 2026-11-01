@@ -1,4 +1,6 @@
 /** Pure dashboard helpers: response types, refresh cadence, health classification, time formatting. */
+import type { ApiClient } from "./api.ts";
+import type { MapInput } from "./flow/map.ts";
 
 export type DashboardRunStatus = "queued" | "running" | "completed" | "completed_with_failures" | "failed" | "cancelled" | "interrupted" | "skipped";
 
@@ -49,3 +51,28 @@ export function inZone(iso: string, timeZone: string): string {
 
 export const statusTone = (s: string): "success" | "error" | "warning" | "neutral" | "primary" =>
   s === "completed" ? "success" : s === "failed" || s === "interrupted" ? "error" : s === "completed_with_failures" || s === "cancelled" ? "warning" : s === "skipped" ? "neutral" : "primary";
+
+/** The slice of the API client that the dashboard map needs (kept small so tests can fake it). */
+export type MapApi = Pick<ApiClient, "request" | "listInstances" | "listJobs" | "listRuns" | "getRun">;
+
+/** Everything the dashboard shows: the summary plus the inputs for the instance map. All calls are scoped to the signed-in user by the backend. */
+export async function loadMapInput(api: MapApi): Promise<{ dashboard: DashboardResponse; map: MapInput }> {
+  const [dashboard, instances, jobs, queued] = await Promise.all([
+    api.request<DashboardResponse>("GET", "/api/dashboard"),
+    api.listInstances(),
+    api.listJobs(),
+    api.listRuns({ limit: 20, offset: 0, status: "queued" }),
+  ]);
+  const latest = await Promise.all(jobs.map((j) => api.listRuns({ limit: 1, offset: 0, jobId: j.id })));
+  const lastResults: MapInput["lastResults"] = {};
+  jobs.forEach((j, i) => {
+    const r = latest[i].runs[0];
+    lastResults[j.id] = r ? { status: r.status, finishedAt: r.finishedAt } : null;
+  });
+  const running = await Promise.all(dashboard.running.map((r) => api.getRun(r.id).catch(() => null)));
+  const active: MapInput["active"] = [
+    ...running.flatMap((run) => (run ? [{ run, percent: null, queued: false }] : [])),
+    ...queued.runs.map((run) => ({ run, percent: null, queued: true })),
+  ];
+  return { dashboard, map: { instances, jobs, lastResults, active } };
+}
