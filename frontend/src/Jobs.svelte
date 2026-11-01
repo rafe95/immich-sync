@@ -3,8 +3,9 @@
   import JobEditor from "./JobEditor.svelte";
   import ScheduleEditor from "./ScheduleEditor.svelte";
   import { ApiError, type Instance } from "./lib/api.ts";
-  import { formatWhen, scheduleSummary, stepSummary, type JobRecord, type ScheduleRecord } from "./lib/jobs.ts";
-  import { statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
+  import JobCard from "./JobCard.svelte";
+  import type { JobRecord, ScheduleRecord } from "./lib/jobs.ts";
+  import type { Run } from "./lib/runs.ts";
   import { api } from "./lib/session.svelte.ts";
 
   let { onrun, openJobId = $bindable(null) }: { onrun: (runId: string) => void; openJobId?: string | null } = $props();
@@ -109,7 +110,22 @@
 </script>
 
 <div class="space-y-4">
-  {#if mode.kind !== "edit"}<h1 class="h3">Jobs</h1>{/if}
+  {#if mode.kind === "list"}
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="h3">Jobs</h1>
+        <p class="text-sm opacity-70">Saved pipelines of one to fifty steps, run in order.</p>
+      </div>
+      {#if !loading && !loadError}
+        <div class="flex flex-col items-end gap-1">
+          <button type="button" class="btn preset-filled-primary-500" disabled={instances.length < 2} onclick={() => (mode = { kind: "edit", job: null })}>New job</button>
+          {#if instances.length < 2}<span class="text-sm opacity-70">A job needs two registered instances (add them on the Dashboard).</span>{/if}
+        </div>
+      {/if}
+    </div>
+  {:else if mode.kind === "schedule"}
+    <h1 class="sr-only">Jobs</h1>
+  {/if}
 
   {#if notice}<p class="text-sm" role="status">{notice}</p>{/if}
 
@@ -123,44 +139,23 @@
     <p class="text-error-500" role="alert">Could not load jobs: {loadError}</p>
     <button type="button" class="btn preset-tonal-surface" onclick={load}>Retry</button>
   {:else}
-    <div>
-      <button type="button" class="btn preset-filled-primary-500" disabled={instances.length < 2} onclick={() => (mode = { kind: "edit", job: null })}>New job</button>
-      {#if instances.length < 2}<span class="ml-2 text-sm opacity-70">A job needs two registered instances (add them on the Dashboard).</span>{/if}
-    </div>
-
     {#if jobs.length === 0}
       <p class="opacity-70">No saved jobs yet.</p>
     {:else}
       <ul class="space-y-3">
         {#each jobs as job (job.id)}
-          {@const last = lastRuns[job.id]}
-          <li class="card preset-outlined-surface-200-800 space-y-2 p-4">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <h2 class="h5">{job.name}</h2>
-              <div class="flex flex-wrap items-center gap-2 text-sm">
-                {#if job.hasMove}<span class="badge preset-tonal-warning">moves assets</span>{/if}
-                {#if last}
-                  <span>Last run:</span><span class="badge {statusClass(last.status)}">{statusLabel(last.status)}</span>
-                  <span class="opacity-70">{formatWhen(last.finishedAt ?? last.startedAt ?? last.createdAt)}</span>
-                {:else}<span class="opacity-70">Never run</span>{/if}
-              </div>
-            </div>
-            <ol class="list-decimal pl-5 text-sm">
-              {#each job.steps as s, i (s.id ?? i)}<li>{stepSummary(s, alias)}</li>{/each}
-            </ol>
-            <p class="text-sm">
-              <strong>Schedule:</strong> {scheduleSummary(job.schedule)}
-              {#if job.schedule?.enabled && job.schedule.nextRuns.length}
-                <span class="block opacity-80">Next: {job.schedule.nextRuns.map((r) => formatWhen(r, job.schedule!.timezone)).join(" · ")}</span>
-              {/if}
-            </p>
-            <div class="flex flex-wrap gap-2">
-              <button type="button" class="btn btn-sm preset-filled-primary-500" disabled={busyId === job.id} onclick={() => runNow(job)}>Run now</button>
-              <button type="button" class="btn btn-sm preset-tonal-primary" disabled={busyId === job.id} onclick={() => start(job, true)}>Dry run</button>
-              <button type="button" class="btn btn-sm preset-tonal-surface" onclick={() => (mode = { kind: "edit", job })}>Edit<span class="sr-only"> {job.name}</span></button>
-              <button type="button" class="btn btn-sm preset-tonal-surface" onclick={() => (mode = { kind: "schedule", jobId: job.id })}>Schedule<span class="sr-only"> for {job.name}</span></button>
-              <button type="button" class="btn btn-sm preset-tonal-error" disabled={busyId === job.id} onclick={() => { confirmDelete = job; deleteDialog?.showModal(); }}>Delete<span class="sr-only"> {job.name}</span></button>
-            </div>
+          <li>
+            <JobCard
+              {job}
+              last={lastRuns[job.id] ?? null}
+              {alias}
+              busy={busyId === job.id}
+              onrun={() => runNow(job)}
+              ondry={() => start(job, true)}
+              onedit={() => (mode = { kind: "edit", job })}
+              onschedule={() => (mode = { kind: "schedule", jobId: job.id })}
+              ondelete={() => { confirmDelete = job; deleteDialog?.showModal(); }}
+            />
           </li>
         {/each}
       </ul>
