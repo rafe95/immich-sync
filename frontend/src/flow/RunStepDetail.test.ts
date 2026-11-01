@@ -17,9 +17,9 @@ function state(patch: Partial<ConsoleState>): ConsoleState {
 const tiles = (root: HTMLElement) => [...root.querySelectorAll("dl > div")].map((d) => `${d.querySelector("dt")!.textContent} ${d.querySelector("dd")!.textContent}`);
 
 describe("RunStepDetail", () => {
-  test("shows a hint until a step is selected", async () => {
+  test("says there are no steps when none is shown", async () => {
     const root = render(await component(), { progress: initialConsole(), selected: null });
-    expect(root.textContent).toContain("Select a step on the diagram");
+    expect(root.textContent).toContain("No steps yet.");
     expect(root.querySelector("button")).toBeNull();
   });
 
@@ -75,10 +75,25 @@ describe("RunStepDetail", () => {
     expect(root.textContent).toContain("Move Phone → NAS");
   });
 
-  test("Show all steps clears the selection", async () => {
-    const root = render(await component(), { progress: initialConsole(), selected: 1 });
+  test("Show all steps calls onclear, and only when the step was picked", async () => {
+    let cleared = 0;
+    const root = render(await component(), { progress: initialConsole(), selected: 1, onclear: () => cleared++ });
     byText(root, "button", "Show all steps").click();
     flush();
-    expect(root.textContent).toContain("Select a step on the diagram");
+    expect(cleared).toBe(1);
+    const auto = render(await component(), { progress: initialConsole(), selected: 1, explicit: false, onclear: () => cleared++ });
+    expect(auto.textContent).not.toContain("Show all steps");
+    expect(auto.textContent).toContain("Latest · Step 1");
+  });
+
+  test("the live step shows its progress bar", async () => {
+    const progress = { ...initialConsole(), progress: { label: "Upload + verify", done: 5, total: 20 } };
+    const root = render(await component(), { progress, selected: 1, explicit: false, liveStep: 1 });
+    expect(root.textContent).toContain("Running · Step 1");
+    expect(root.textContent).toContain("Upload + verify");
+    expect(root.textContent).toContain("5 / 20");
+    expect(root.querySelector('[role="progressbar"]')!.getAttribute("aria-valuenow")).toBe("25");
+    const other = render(await component(), { progress, selected: 2, explicit: false, liveStep: 1 });
+    expect(other.querySelector('[role="progressbar"]')).toBeNull();
   });
 });

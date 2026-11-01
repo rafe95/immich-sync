@@ -7,16 +7,26 @@
 /* Tailwind's dark: variant follows the explicit choice made in the header; "system" leaves data-mode unset. */
 @custom-variant dark (&:where([data-mode=dark], [data-mode=dark] *));
 
-/* Light theme: a soft grey page with white cards and header, as in the design mocks. Dark keeps its single dark surface. */
-body {
-  background-color: light-dark(oklch(0.97 0.003 260), transparent);
+/*
+ * Page and card surfaces. Light: a soft grey page with white cards and header, as in the design mocks. Dark: a near-black page with
+ * slightly lighter cards, so panels read as layers instead of blending into the background.
+ */
+:root {
+  --app-page: light-dark(oklch(0.97 0.003 260), oklch(0.145 0.005 260));
+  --app-card: light-dark(var(--color-surface-50), oklch(0.2 0.006 260));
+  --app-canvas: light-dark(var(--color-surface-50), oklch(0.165 0.006 260));
 }
-.card.preset-outlined-surface-200-800 {
-  background-color: var(--color-surface-50-950);
+body {
+  background-color: var(--app-page);
+}
+.card.preset-outlined-surface-200-800,
+.bg-surface-50-950,
+.preset-filled-surface-50-950 {
+  background-color: var(--app-card);
 }
 
 .svelte-flow {
-  --xy-background-color: var(--color-surface-50-950);
+  --xy-background-color: var(--app-canvas);
   --xy-background-pattern-color: var(--color-surface-300-700);
   --xy-controls-button-background-color: var(--color-surface-100-900);
   --xy-controls-button-background-color-hover: var(--color-surface-200-800);
@@ -33,4 +43,26 @@ body {
   to {
     stroke-dashoffset: -12;
   }
+}
+
+/* Native progress bars (console, map panel) use the theme's primary colour instead of the browser's default green. */
+progress {
+  appearance: none;
+  height: 0.5rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background-color: var(--color-surface-200-800);
+  accent-color: var(--color-primary-500);
+}
+progress::-webkit-progress-bar {
+  background-color: var(--color-surface-200-800);
+}
+progress::-webkit-progress-value {
+  background-color: var(--color-primary-500);
+  border-radius: 999px;
+}
+progress::-moz-progress-bar {
+  background-color: var(--color-primary-500);
+  border-radius: 999px;
 }

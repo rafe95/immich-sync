@@ -1,8 +1,21 @@
 <script lang="ts">
   import { formatBytes, operationLabel, stepSummaries, type ConsoleState, type RunStepSettings } from "../lib/runs.ts";
 
-  /** Counts and failures for the step picked on the run diagram; the console is filtered to it by the parent. */
-  let { progress, selected = $bindable(null), steps = [] }: { progress: ConsoleState; selected: number | null; steps?: RunStepSettings[] } = $props();
+  /**
+   * Counts and failures for one step. The step is the one picked on the diagram (`explicit`; the console is then filtered to it by
+   * the parent) or, when nothing is picked, the step that is live now or the last one.
+   */
+  let {
+    progress,
+    selected,
+    explicit = true,
+    liveStep = null,
+    steps = [],
+    onclear,
+  }: { progress: ConsoleState; selected: number | null; explicit?: boolean; liveStep?: number | null; steps?: RunStepSettings[]; onclear?: () => void } = $props();
+
+  const live = $derived(selected !== null && selected === liveStep ? progress.progress : null);
+  const livePercent = $derived(live && live.total ? Math.min(100, Math.round((live.done / live.total) * 100)) : null);
 
   const block = $derived(selected === null ? null : (stepSummaries(progress.summaries, progress.failures).find((b) => b.step === selected) ?? null));
   const liveFailures = $derived(selected === null ? [] : progress.failures.filter((f) => f.step === selected));
@@ -13,11 +26,19 @@
   <div class="card preset-outlined-surface-200-800 space-y-3 p-3 text-sm">
     <div class="flex items-start justify-between gap-2">
       <div>
-        <div class="text-xs font-semibold tracking-wide uppercase opacity-70">Selected · Step {selected}</div>
+        <div class="text-xs font-semibold tracking-wide uppercase opacity-70">{explicit ? "Selected" : liveStep === selected ? "Running" : "Latest"} · Step {selected}</div>
         {#if settings}<h3 class="h6">{operationLabel(settings.operation)} {settings.source.alias} → {settings.target.alias}</h3>{/if}
       </div>
-      <button type="button" class="btn btn-sm preset-tonal-surface" onclick={() => (selected = null)}>Show all steps</button>
+      {#if explicit && onclear}<button type="button" class="btn btn-sm preset-tonal-surface" onclick={onclear}>Show all steps</button>{/if}
     </div>
+    {#if live}
+      <div class="space-y-1.5">
+        <div class="flex justify-between gap-2"><strong>{live.label ?? "Progress"}</strong><span>{live.done}{live.total !== null ? ` / ${live.total}` : ""}</span></div>
+        <div class="h-2 overflow-hidden rounded-full bg-surface-200-800" role="progressbar" aria-label="Step progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={livePercent ?? undefined}>
+          <div class="h-full rounded-full bg-primary-500 {livePercent === null ? 'w-1/3 animate-pulse' : ''}" style={livePercent === null ? undefined : `width: ${livePercent}%`}></div>
+        </div>
+      </div>
+    {/if}
     {#if block?.totals}
       {@const t = block.totals}
       <dl class="grid grid-cols-2 gap-2">
@@ -47,5 +68,5 @@
     {/if}
   </div>
 {:else}
-  <p class="text-sm opacity-70">Select a step on the diagram to see its counts and filter the console.</p>
+  <p class="text-sm opacity-70">No steps yet.</p>
 {/if}
