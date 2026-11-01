@@ -14,6 +14,15 @@ export class FakeExecutor implements StepExecutor {
   /** When set, a gated step waits for its gate only, as if it did not notice cancellation. */
   ignoreAbort = false;
   private startedPromises = new Map<number, Promise<void>>();
+  private nextWaiters = new Map<number, Array<() => void>>();
+
+  /**
+   * Resolves when a step at `position` begins after this call. Unlike hasStarted, which stays resolved once any run has
+   * started that position, it cannot be satisfied by an earlier run (for example a dry run made while seeding).
+   */
+  nextStart(position: number): Promise<void> {
+    return new Promise((resolve) => this.nextWaiters.set(position, [...(this.nextWaiters.get(position) ?? []), resolve]));
+  }
 
   /** Resolves once the step has begun running. */
   hasStarted(position: number): Promise<void> {
@@ -33,6 +42,8 @@ export class FakeExecutor implements StepExecutor {
     const outcome = this.outcomes.get(ctx.position);
     this.hasStarted(ctx.position);
     this.started.get(ctx.position)?.();
+    for (const resolve of this.nextWaiters.get(ctx.position) ?? []) resolve();
+    this.nextWaiters.delete(ctx.position);
     await ctx.log({ level: "info", type: "progress", message: `working ${ctx.position}`, data: { done: 1, total: 2 } });
     if (gate) {
       if (this.ignoreAbort) await gate;

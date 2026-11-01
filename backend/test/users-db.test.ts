@@ -301,8 +301,11 @@ describe.skipIf(!url)("user deletion (PostgreSQL)", () => {
       let release!: () => void;
       t.executor.ignoreAbort = true;
       t.executor.gates.set(1, new Promise<void>((r) => (release = r)));
+      // The seed already ran a dry run, so hasStarted(1) would resolve at once; wait for THIS run's step to begin, or the
+      // delete can cancel the run during preflight, before the step ignores the abort, and then succeed instead of timing out.
+      const started = t.executor.nextStart(1);
       expect((await t.bob.call("POST", `/api/jobs/${job.id}/run`, {})).status).toBe(202);
-      await t.executor.hasStarted(1);
+      await started;
 
       const res = await t.admin.call("DELETE", `/api/users/${t.bobId}`);
       expect(res.status).toBe(409);
