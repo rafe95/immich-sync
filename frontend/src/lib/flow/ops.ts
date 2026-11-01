@@ -33,4 +33,4 @@ export type StepNodeData = {
   orientation: "vertical" | "horizontal";
 };
 
-export type LabelEdgeData = { label: string; tone: OpTone | "neutral"; style: EdgeStyle; icon?: "on-error"; jobId?: string };
+export type LabelEdgeData = { label: string; tone: OpTone | "neutral"; style: EdgeStyle; icon?: "on-error"; jobId?: string; /** Makes the label clickable (the line itself is a thin target). Set by the view, not by the graph builders. */ onselect?: () => void };

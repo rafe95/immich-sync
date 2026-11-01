@@ -41,7 +41,10 @@
     const auto = autoLayout(built.nodes, built.edges);
     const pos = mergeLayout(auto, { ...(saved ?? {}), ...moved });
     nodes = built.nodes.map((n) => ({ ...n, position: pos[n.id] ?? n.position, data: { ...n.data, selected: n.id === selectedInstanceId } }));
-    edges = built.edges.map((e) => ({ ...e, selected: selectedJobId !== null && (e.data as { jobId?: string } | undefined)?.jobId === selectedJobId }));
+    edges = built.edges.map((e) => {
+      const jobId = e.data?.jobId;
+      return { ...e, data: { ...e.data!, onselect: jobId ? () => selectJob(jobId) : undefined }, selected: selectedJobId !== null && jobId === selectedJobId };
+    });
   });
 
   const job = $derived(map.jobs.find((j) => j.id === selectedJobId) ?? null);

@@ -15,4 +15,4 @@
   path={path[0]}
   style="stroke: {d.style === 'warning' ? stroke.warning : stroke[d.tone]}; stroke-width: {selected ? 3 : 2}; {dash ? `stroke-dasharray: ${dash};` : ''} {d.style === 'muted' ? 'opacity: .6;' : ''}"
 />
-<EdgeLabel x={path[1]} y={path[2]} class="badge {badge[d.tone]} nodrag nopan">{d.icon === "on-error" ? "⚠ " : ""}{d.label}</EdgeLabel>
+<EdgeLabel x={path[1]} y={path[2]} class="badge {badge[d.tone]} nodrag nopan {d.onselect ? 'cursor-pointer' : ''}" onclick={() => d.onselect?.()}>{d.icon === "on-error" ? "⚠ " : ""}{d.label}</EdgeLabel>
