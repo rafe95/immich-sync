@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "./lib/session.svelte.ts";
   import { statusLabel } from "./lib/runs.ts";
-  import { inZone, loadMapInput, refreshInterval, statusTone, type DashboardResponse } from "./lib/dashboard.ts";
+  import { inZone, loadMapInput, refreshInterval, statusTone, summaryCards, type DashboardResponse } from "./lib/dashboard.ts";
   import type { MapInput } from "./lib/flow/map.ts";
   import InstanceMap from "./flow/InstanceMap.svelte";
 
@@ -65,29 +65,49 @@
   {#if loading && !data}
     <p role="status">Loading…</p>
   {:else if data}
-    <section aria-labelledby="d-running" class="space-y-2">
-      <h2 id="d-running" class="h5">Running now</h2>
-      {#if data.running.length === 0}
-        <p class="text-sm opacity-70">Nothing is running.</p>
-      {:else}
-        <ul class="space-y-1">
-          {#each data.running as r (r.id)}
-            <li class="card preset-outlined-primary-500 flex flex-wrap items-center gap-3 p-3">
-              <span class="badge preset-tonal-primary">running</span>
-              {#if onopenrun}<button type="button" class="anchor" onclick={() => onopenrun(r.id)}>{r.jobName}</button>{:else}<span>{r.jobName}</span>{/if}
-              <span class="text-xs opacity-70">since {fmt(r.startedAt)}</span>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
-
-    <section aria-labelledby="d-stats" class="space-y-2">
-      <h2 id="d-stats" class="h5">Last 7 days</h2>
-      <dl class="flex gap-6 text-sm">
-        <div><dt class="opacity-70">Runs</dt><dd class="text-2xl">{data.stats.runsLast7Days}</dd></div>
-        <div><dt class="opacity-70">With failures</dt><dd class="text-2xl {data.stats.failedLast7Days ? 'text-error-600-400' : ''}">{data.stats.failedLast7Days}</dd></div>
-      </dl>
+    {@const cards = summaryCards(data)}
+    <section aria-label="Summary" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div class="card preset-outlined-surface-200-800 p-4">
+        <div class="text-xs opacity-70">Instances</div>
+        <div class="mt-1 text-2xl font-bold">
+          {cards.instances.total}
+          {#if cards.instances.attention > 0}
+            <span class="text-sm font-medium text-warning-700-300">· {cards.instances.attention} {cards.instances.attention === 1 ? "needs" : "need"} attention</span>
+          {/if}
+        </div>
+      </div>
+      <div class="card preset-outlined-surface-200-800 p-4">
+        <div class="text-xs opacity-70">Running now</div>
+        <div class="mt-1 text-2xl font-bold">
+          {cards.running.count}
+          {#if cards.running.first}
+            {@const first = cards.running.first}
+            <span class="text-sm font-medium">·
+              {#if onopenrun}<button type="button" class="anchor" onclick={() => onopenrun(first.id)}>{first.jobName}</button>{:else}{first.jobName}{/if}{#if cards.running.count > 1}
+                <span class="opacity-70">+{cards.running.count - 1} more</span>{/if}
+            </span>
+          {:else}
+            <span class="text-sm font-medium opacity-70">· nothing running</span>
+          {/if}
+        </div>
+      </div>
+      <div class="card preset-outlined-surface-200-800 p-4">
+        <div class="text-xs opacity-70">Next scheduled</div>
+        {#if cards.next}
+          <div class="mt-1 text-2xl font-bold">{new Date(cards.next.nextRun).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+          <div class="truncate text-sm opacity-80" title={cards.next.jobName}>{new Date(cards.next.nextRun).toLocaleDateString()} · {cards.next.jobName}</div>
+        {:else}
+          <div class="mt-1 text-2xl font-bold opacity-70">None</div>
+          <div class="text-sm opacity-80">No enabled schedules</div>
+        {/if}
+      </div>
+      <div class="card preset-outlined-surface-200-800 p-4">
+        <div class="text-xs opacity-70">Last 7 days</div>
+        <div class="mt-1 text-2xl font-bold">
+          {cards.week.runs} {cards.week.runs === 1 ? "run" : "runs"}
+          {#if cards.week.failed > 0}<span class="text-sm font-medium text-error-600-400">· {cards.week.failed} with failures</span>{/if}
+        </div>
+      </div>
     </section>
 
     <section aria-labelledby="d-map" class="space-y-2">

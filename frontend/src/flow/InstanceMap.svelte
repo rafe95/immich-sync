@@ -113,7 +113,6 @@
     onchanged();
   }
 
-  const panelOpen = $derived(adding || instance !== null || job !== null);
 </script>
 
 <div class="space-y-3">
@@ -126,9 +125,11 @@
         <button type="button" class="btn btn-sm {mode === 'list' ? 'preset-filled-surface-500' : ''}" aria-pressed={mode === "list"} onclick={() => (mode = "list")}>List</button>
       </div>
     </div>
-    {#if mode === "map" && map.instances.length > 0}
-      <button type="button" class="btn btn-sm preset-tonal-surface" onclick={resetLayout}>Reset layout</button>
-    {/if}
+    <ul class="flex flex-wrap items-center gap-4 text-xs" aria-label="Line colours">
+      <li class="flex items-center gap-1.5"><span class="inline-block h-1 w-5 rounded bg-primary-500"></span>Copy</li>
+      <li class="flex items-center gap-1.5"><span class="inline-block h-1 w-5 rounded bg-warning-500"></span>Move</li>
+      <li class="flex items-center gap-1.5"><span class="inline-block h-1 w-5 rounded bg-tertiary-500"></span>Sync metadata</li>
+    </ul>
   </div>
   {#if notice}
     <p class="text-sm" role="status">{notice}</p>
@@ -137,7 +138,7 @@
   {#if map.instances.length === 0 && !adding}
     <p class="text-sm opacity-70">No instances registered yet. Add one to get started.</p>
   {:else}
-    <div class="grid gap-3 {panelOpen ? 'lg:grid-cols-[1fr_22rem]' : ''}">
+    <div class="grid gap-3 lg:grid-cols-[1fr_22rem]">
       {#if mode === "map"}
         <div class="h-96">
           <FlowCanvas
@@ -159,10 +160,17 @@
         <MapInstancePanel {instance} {map} {onchanged} {onsaved} {ondeleted} onclose={closePanels} />
       {:else if job}
         <MapJobPanel {job} {map} {onopenrun} {onopenjob} eventsFor={(id) => live.get(id)} {onchanged} onclose={closePanels} />
+      {:else}
+        <aside class="card preset-outlined-surface-200-800 p-4 text-sm opacity-80" aria-label="Details">
+          Select an instance to manage it, or a job's line to see its progress.
+        </aside>
       {/if}
     </div>
     {#if mode === "map"}
-      <p class="text-sm opacity-70">Drag instances to arrange them. Click an instance to manage it, or a job's line for details.</p>
+      <p class="flex flex-wrap items-center justify-between gap-2 text-sm opacity-70">
+        <span>Drag instances to arrange them. Click an instance to manage it, or a job's line for details.</span>
+        {#if map.instances.length > 0}<button type="button" class="anchor" onclick={resetLayout}>Reset layout</button>{/if}
+      </p>
     {/if}
   {/if}
 </div>
