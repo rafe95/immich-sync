@@ -104,6 +104,11 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
   return { nodes: [...nodes.values()], edges };
 }
 
+export const ADD_INSTANCE_NODE_ID = "add-instance";
+
+/** The dashed "Add instance" box. It joins the automatic layout (as the last loner) but is never dragged or saved. */
+export const addInstanceNode = (): Node => ({ id: ADD_INSTANCE_NODE_ID, type: "add", position: { x: 0, y: 0 }, draggable: false, selectable: false, data: {} });
+
 /** Columns: only-source 0, both 1, only-target 2, unconnected 0 below the rest. */
 export function autoLayout(nodes: Node[], edges: Edge[]): Layout {
   const sources = new Set(edges.map((e) => e.source));

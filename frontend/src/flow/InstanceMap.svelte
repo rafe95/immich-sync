@@ -1,13 +1,15 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import type { Edge, Node } from "@xyflow/svelte";
+  import type { Edge, Node, NodeTypes } from "@xyflow/svelte";
   import { api } from "../lib/session.svelte.ts";
   import type { Instance } from "../lib/api.ts";
+  import AddInstanceNode from "./AddInstanceNode.svelte";
   import FlowCanvas from "./FlowCanvas.svelte";
+  import InstanceNode from "./InstanceNode.svelte";
   import MapInstancePanel from "./MapInstancePanel.svelte";
   import MapJobPanel from "./MapJobPanel.svelte";
   import InstanceList from "../InstanceList.svelte";
-  import { autoLayout, buildMap, loadLayout, mergeLayout, saveLayout, type Layout, type MapInput } from "../lib/flow/map.ts";
+  import { ADD_INSTANCE_NODE_ID, addInstanceNode, autoLayout, buildMap, loadLayout, mergeLayout, saveLayout, type Layout, type MapInput } from "../lib/flow/map.ts";
   import { livePercents, withLivePercents } from "../lib/flow/live.ts";
   import { createLiveRuns } from "../lib/flow/liveRuns.svelte.ts";
 
@@ -23,6 +25,7 @@
   // A string, so the map is only rebuilt when a percentage actually changes, not on every log line.
   const percentsKey = $derived(JSON.stringify(livePercents(map.active, (id) => live.get(id)?.state)));
 
+  const nodeTypes = { instance: InstanceNode, add: AddInstanceNode } as unknown as NodeTypes;
   let saved = $state<Layout | null>(loadLayout());
   let mode = $state<"map" | "list">("map");
   // At most one panel is open: a job (edge), an instance (node or list row), or the add form.
@@ -38,9 +41,14 @@
 
   $effect(() => {
     const built = buildMap(withLivePercents(map, JSON.parse(percentsKey) as Record<string, number>));
-    const auto = autoLayout(built.nodes, built.edges);
+    const all: Node[] = [...built.nodes, addInstanceNode()];
+    const auto = autoLayout(all, built.edges);
     const pos = mergeLayout(auto, { ...(saved ?? {}), ...moved });
-    nodes = built.nodes.map((n) => ({ ...n, position: pos[n.id] ?? n.position, data: { ...n.data, selected: n.id === selectedInstanceId } }));
+    nodes = all.map((n) =>
+      n.id === ADD_INSTANCE_NODE_ID
+        ? { ...n, position: auto[n.id]!, data: { onadd: startAdd } }
+        : { ...n, position: pos[n.id] ?? n.position, data: { ...n.data, selected: n.id === selectedInstanceId } },
+    );
     edges = built.edges.map((e) => {
       const jobId = e.data?.jobId;
       return { ...e, data: { ...e.data!, onselect: jobId ? () => selectJob(jobId) : undefined }, selected: selectedJobId !== null && jobId === selectedJobId };
@@ -139,7 +147,8 @@
             bind:nodes
             bind:edges
             lockable
-            onnodeclick={(n) => !n.id.startsWith("unknown:") && selectInstance(n.id)}
+            {nodeTypes}
+            onnodeclick={(n) => n.type === "instance" && !n.id.startsWith("unknown:") && selectInstance(n.id)}
             onedgeclick={(e) => selectJob((e.data as { jobId?: string } | undefined)?.jobId ?? null)}
             onnodedragstop={dragStop}
           />

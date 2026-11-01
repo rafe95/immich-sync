@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { Instance } from "../api.ts";
 import type { JobRecord, ScheduleRecord, StepRecord } from "../jobs.ts";
 import type { Run } from "../runs.ts";
-import { autoLayout, buildMap, formatWhen, loadLayout, mergeLayout, saveLayout, type MapInput } from "./map.ts";
+import { ADD_INSTANCE_NODE_ID, addInstanceNode, autoLayout, buildMap, COLUMN_GAP, formatWhen, loadLayout, mergeLayout, ROW_GAP, saveLayout, type MapInput } from "./map.ts";
 
 const inst = (id: string, over: Partial<Instance> = {}): Instance => ({
   id, alias: id, apiUrl: `http://${id}/api`, note: null, isDefault: false, lastCheck: null, lastCheckedAt: null, createdAt: "", updatedAt: "", ...over,
@@ -117,4 +117,24 @@ test("layout round-trips through storage and ignores junk", () => {
   expect(loadLayout()).toEqual({ a: { x: 1, y: 2 } });
   store.set("immich-sync.map-layout.v1", "not json");
   expect(loadLayout()).toBeNull();
+});
+
+test("the add-instance placeholder is a fixed 'add' node", () => {
+  const n = addInstanceNode();
+  expect(n).toMatchObject({ id: ADD_INSTANCE_NODE_ID, type: "add", draggable: false });
+  expect(buildMap(input()).nodes.map((x) => x.id)).not.toContain(ADD_INSTANCE_NODE_ID);
+});
+
+test("autoLayout puts the placeholder in the first column under the other loners and sources", () => {
+  const { nodes, edges } = buildMap(input({ instances: [inst("a"), inst("b"), inst("c")], jobs: [job([step("a", "b")])] }));
+  const pos = autoLayout([...nodes, addInstanceNode()], edges);
+  // a is a source (column 0, row 0), b a target (column 2), c has no job (loner, row 1), the placeholder follows c.
+  expect(pos["a"]).toEqual({ x: 0, y: 0 });
+  expect(pos["b"]).toEqual({ x: 2 * COLUMN_GAP, y: 0 });
+  expect(pos["c"]).toEqual({ x: 0, y: ROW_GAP });
+  expect(pos[ADD_INSTANCE_NODE_ID]).toEqual({ x: 0, y: 2 * ROW_GAP });
+});
+
+test("with no instances the placeholder is alone at the origin", () => {
+  expect(autoLayout([addInstanceNode()], [])[ADD_INSTANCE_NODE_ID]).toEqual({ x: 0, y: 0 });
 });
