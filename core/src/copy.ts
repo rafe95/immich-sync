@@ -326,7 +326,9 @@ export async function copyAssets(options: CopyOptions): Promise<TransferPlan | C
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.range ? { range: options.range } : {}),
     ...(options.includeTrashed ? { includeTrashed: true } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   };
+  // Cancelling while the plan is built rejects with the signal's reason: there is no plan to report results against.
   const plan = await planTransfer(planOptions);
   if (options.dryRun) return plan;
 

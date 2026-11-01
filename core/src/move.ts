@@ -133,8 +133,10 @@ export async function moveAssets(options: MoveOptions): Promise<TransferPlan | M
     operation: "move",
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.range ? { range: options.range } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   };
   // Validates instances, source-move permission and same-server refusal; read-only.
+  // Cancelling while the plan is built rejects with the signal's reason, before anything is copied or trashed.
   const plan = await planTransfer(planOptions);
   if (options.dryRun) return plan;
 

@@ -31,6 +31,11 @@ export type TransferPlanOptions = {
    * and asset.update; album/tag permissions only for the enabled options) instead of the copy roles.
    */
   metadataSync?: MetadataSyncFlags;
+  /**
+   * Cancels planning: requests in flight are aborted and no further request is made. Planning then rejects with the
+   * signal's reason (an AbortError by default), never with a TransferPlanError or as a per-asset failure.
+   */
+  signal?: AbortSignal;
 };
 
 export type PlannedComponentStatus = "already-present" | "would-transfer" | "in-target-trash" | "failed";
@@ -211,6 +216,7 @@ async function discoverSourceAssets(
   kind: NonNullable<TransferPlanOptions["kind"]>,
   range: TransferPlanOptions["range"],
   includeTrashed: boolean,
+  signal?: AbortSignal,
 ): Promise<AssetResponseDto[]> {
   const types = kind === "photos"
     ? [AssetTypeEnum.Image]
@@ -220,7 +226,8 @@ async function discoverSourceAssets(
   const found = new Map<string, AssetResponseDto>();
   for (const visibility of [AssetVisibility.Timeline, AssetVisibility.Archive]) {
     for (const type of types) {
-      const assets = await collectAssets(instance, searchFilter(visibility, type, range), includeTrashed);
+      signal?.throwIfAborted();
+      const assets = await collectAssets(instance, searchFilter(visibility, type, range), includeTrashed, signal);
       for (const asset of assets) found.set(asset.id, asset);
     }
   }
@@ -262,8 +269,9 @@ async function getLivePhotoVideo(
   ownerId: string,
   id: string,
   includeTrashed: boolean,
+  signal?: AbortSignal,
 ): Promise<AssetResponseDto> {
-  const asset = sourceAssets.get(id) ?? await getAssetInfo({ id }, requestOpts(instance));
+  const asset = sourceAssets.get(id) ?? await getAssetInfo({ id }, { ...requestOpts(instance), signal });
   if (asset.id !== id || asset.type !== AssetTypeEnum.Video) {
     throw new TransferPlanError("Live Photo companion is not a video asset.");
   }
@@ -283,6 +291,7 @@ async function getLivePhotoVideo(
 async function classifyComponent(
   instance: Instance,
   asset: AssetResponseDto,
+  signal?: AbortSignal,
 ): Promise<PlannedComponent> {
   const base = {
     id: asset.id,
@@ -295,11 +304,13 @@ async function classifyComponent(
     return { ...base, status: "failed", message: "Source asset has no checksum." };
   }
   try {
-    const matches = await findAssetsByChecksum(instance, asset.checksum);
+    const matches = await findAssetsByChecksum(instance, asset.checksum, signal);
     if (matches.some((match) => !match.isTrashed)) return { ...base, status: "already-present" };
     if (matches.some((match) => match.isTrashed)) return { ...base, status: "in-target-trash" };
     return { ...base, status: "would-transfer" };
   } catch (error) {
+    // A cancelled lookup is not a failed asset: stop planning.
+    signal?.throwIfAborted();
     return { ...base, status: "failed", message: `Target checksum lookup failed (${safeRequestError(error)}).` };
   }
 }
@@ -310,6 +321,7 @@ async function buildGroups(
   ownerId: string,
   kind: NonNullable<TransferPlanOptions["kind"]>,
   includeTrashed: boolean,
+  signal?: AbortSignal,
 ): Promise<Array<{ primary: AssetResponseDto; components: Array<AssetResponseDto | { id: string; error: string }> }>> {
   const eligible = sourceAssets.filter((asset) => isEligibleSourceAsset(asset, ownerId, includeTrashed));
   const byId = new Map(eligible.map((asset) => [asset.id, asset]));
@@ -322,6 +334,7 @@ async function buildGroups(
 
   const groups: Array<{ primary: AssetResponseDto; components: Array<AssetResponseDto | { id: string; error: string }> }> = [];
   for (const asset of eligible) {
+    signal?.throwIfAborted();
     if (kind !== "photos" && kind !== "videos" && asset.type === AssetTypeEnum.Video && companionIds.has(asset.id)) {
       continue;
     }
@@ -331,8 +344,9 @@ async function buildGroups(
     const components: Array<AssetResponseDto | { id: string; error: string }> = [asset];
     if (kind !== "videos" && asset.type === AssetTypeEnum.Image && asset.livePhotoVideoId) {
       try {
-        components.push(await getLivePhotoVideo(source, byId, ownerId, asset.livePhotoVideoId, includeTrashed));
+        components.push(await getLivePhotoVideo(source, byId, ownerId, asset.livePhotoVideoId, includeTrashed, signal));
       } catch (error) {
+        signal?.throwIfAborted();
         const reason = error instanceof TransferPlanError ? error.message : (describeHttpError(error) ?? "request failed");
         components.push({ id: asset.livePhotoVideoId, error: `Live Photo companion could not be verified: ${reason}` });
       }
@@ -344,11 +358,15 @@ async function buildGroups(
 
 export async function planTransfer(options: TransferPlanOptions): Promise<TransferPlan> {
   validateOptions(options);
+  const { signal } = options;
+  signal?.throwIfAborted();
   const kind = options.kind ?? "all";
   const [sourceCheck, targetCheck] = await Promise.all([
-    checkInstance(options.source),
-    checkInstance(options.target),
+    checkInstance(options.source, signal),
+    checkInstance(options.target, signal),
   ]);
+  // A cancelled check reports a failed stage; the cancel takes precedence over that report.
+  signal?.throwIfAborted();
   if (options.metadataSync) {
     validatePermissions("Source", sourceCheck, metadataSyncPermissions("source", options.metadataSync));
     validatePermissions("Target", targetCheck, metadataSyncPermissions("target", options.metadataSync));
@@ -366,14 +384,15 @@ export async function planTransfer(options: TransferPlanOptions): Promise<Transf
 
   let sourceAssets: AssetResponseDto[];
   try {
-    sourceAssets = await discoverSourceAssets(options.source, kind, normalizeRange(options.range), options.includeTrashed === true);
+    sourceAssets = await discoverSourceAssets(options.source, kind, normalizeRange(options.range), options.includeTrashed === true, signal);
   } catch (error) {
+    signal?.throwIfAborted();
     if (error instanceof TransferPlanError) throw error;
     if (error instanceof AssetSearchError) throw new TransferPlanError(error.message);
     throw new TransferPlanError(`Source asset discovery failed for ${options.source.alias} (${safeRequestError(error)}).`);
   }
 
-  const groups = await buildGroups(options.source, sourceAssets, sourceCheck.user!.id, kind, options.includeTrashed === true);
+  const groups = await buildGroups(options.source, sourceAssets, sourceCheck.user!.id, kind, options.includeTrashed === true, signal);
   const plannedAssets: PlannedAsset[] = [];
   const events: TransferPlanEvent[] = [];
   const warnings = [PREVIEW_WARNING];
@@ -385,6 +404,7 @@ export async function planTransfer(options: TransferPlanOptions): Promise<Transf
   for (const group of groups) {
     const components: PlannedComponent[] = [];
     for (const component of group.components) {
+      signal?.throwIfAborted();
       if ("error" in component) {
         components.push({
           id: component.id,
@@ -396,7 +416,7 @@ export async function planTransfer(options: TransferPlanOptions): Promise<Transf
           message: component.error,
         });
       } else {
-        components.push(await classifyComponent(options.target, component));
+        components.push(await classifyComponent(options.target, component, signal));
       }
     }
     const status = groupStatus(components);

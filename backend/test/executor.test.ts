@@ -129,6 +129,31 @@ describe("core-backed executor", () => {
     expect(a2.isTrashed).toBe(false);
   });
 
+  for (const [name, op, dryRun] of [["a dry run", "copy", true], ["a real copy", "copy", false], ["a move", "move", false]] as const) {
+    test(`cancelling ${name} while it is still planning cancels the run and changes nothing`, async () => {
+      const c1 = bytes("one");
+      const c2 = bytes("two");
+      const a1 = asset("a1", c1);
+      const a2 = asset("a2", c2);
+      let cancel = () => {};
+      let lookups = 0;
+      const source = fake({ assets: [a1, a2], originals: { a1: c1, a2: c2 } });
+      // The target is asked about each source asset while the plan is built; the first question cancels the run.
+      const target = fake({ onMetadataSearch: (checksum) => { if (!checksum) return; lookups++; cancel(); } });
+      const { run, step, svc } = await setup(source, target);
+      cancel = () => svc.manager.activeRunIds().forEach((id) => svc.manager.cancel(id));
+
+      const { record } = await run([step(op)], dryRun);
+
+      expect(record.status).toBe("cancelled");
+      expect(record.steps[0]!.status).toBe("cancelled");
+      expect(lookups).toBe(1);
+      expect(mutating(source)).toHaveLength(0);
+      expect(mutating(target)).toHaveLength(0);
+      expect(a1.isTrashed || a2.isTrashed).toBe(false);
+    });
+  }
+
   test("an instance check failure stops the run before any change, with no secrets logged", async () => {
     const c = bytes("one");
     const source = fake({ assets: [asset("a1", c)], originals: { a1: c } });

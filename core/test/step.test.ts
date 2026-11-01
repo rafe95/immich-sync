@@ -545,3 +545,45 @@ describe("sync_metadata permissions", () => {
     expect(mutating(target)).toHaveLength(0);
   });
 });
+
+describe("runStep cancelled while planning", () => {
+  /** The target aborts at its first checksum lookup, which happens while the plan is being built. */
+  function cancelOnFirstLookup() {
+    const controller = new AbortController();
+    const state = { lookups: 0 };
+    const onMetadataSearch = (checksum?: string) => {
+      if (!checksum) return;
+      state.lookups++;
+      controller.abort();
+    };
+    return { controller, state, onMetadataSearch };
+  }
+  const sourceWithTwo = () => {
+    const one = bytes("one");
+    const two = bytes("two");
+    return fake({ assets: [mediaAsset("a1", one), mediaAsset("a2", two)], originals: { a1: one, a2: two } });
+  };
+
+  for (const [name, operation, dryRun] of [
+    ["a dry-run copy", "copy", true],
+    ["a real copy", "copy", false],
+    ["a move", "move", false],
+    ["a sync_metadata step", "sync_metadata", false],
+  ] as const) {
+    test(`${name} ends as cancelled with nothing changed on either server`, async () => {
+      const { controller, state, onMetadataSearch } = cancelOnFirstLookup();
+      const source = sourceWithTwo();
+      const target = fake({ onMetadataSearch });
+
+      const result = await runStep(opts(source, target, { operation, dryRun, signal: controller.signal }));
+
+      expect(result.status).toBe("cancelled");
+      expect(result.assets).toHaveLength(0);
+      expect(state.lookups).toBe(1);
+      expect(mutating(source)).toHaveLength(0);
+      expect(mutating(target)).toHaveLength(0);
+      expect(target.uploadedMedia).toHaveLength(0);
+      expect(deletes(source)).toHaveLength(0);
+    });
+  }
+});
