@@ -1,0 +1,3 @@
+[test]
+# Lets component tests import .svelte files; the plugin does nothing for other files.
+preload = ["./frontend/test/svelte-plugin.ts"]
