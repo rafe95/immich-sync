@@ -6,7 +6,10 @@ useDom();
 // Each screen is replaced by a stub that renders only its name, so these tests cover the shell: the top bar and routing.
 // (The screens that embed Svelte Flow canvases cannot be laid out in a test DOM anyway.)
 // Svelte components are plain functions of (anchor, props), so a wrapper can hand a fixed name to the real Stub component.
-for (const name of ["Dashboard", "Jobs", "Setup", "Users", "Login", "Run", "Settings", "History"]) {
+// Setup, Users, Login and Settings are not stubbed: bun mocks are process-wide and AccountScreens.test.ts renders those
+// four for real. Here they are recognised by their headings (see `screen`); the fake backend answers their requests with
+// failures, which they show as ordinary error states.
+for (const name of ["Dashboard", "Jobs", "Run", "History"]) {
   mock.module(`./${name}.svelte`, async () => {
     const Stub = (await import("../test/Stub.svelte")).default as unknown as (anchor: Node, props: object) => void;
     return { default: ($$anchor: Node) => Stub($$anchor, { name }) };
@@ -49,7 +52,13 @@ async function mountApp() {
 
 const navLabels = (root: HTMLElement) => [...root.querySelectorAll("nav[aria-label=Main] button")].map((b) => b.textContent!.trim());
 const current = (root: HTMLElement) => root.querySelector("nav[aria-label=Main] [aria-current=page]")?.textContent?.trim();
-const screen = (root: HTMLElement) => root.querySelector("[data-screen]")?.getAttribute("data-screen");
+const HEADINGS: Record<string, string> = { "Sign in": "Login", "Set up Immich Sync": "Setup", Users: "Users", Settings: "Settings" };
+const screen = (root: HTMLElement) => {
+  const stub = root.querySelector("[data-screen]")?.getAttribute("data-screen");
+  if (stub) return stub;
+  const h1 = root.querySelector("main h1, h1.h3, h1.h4")?.textContent?.trim();
+  return h1 ? HEADINGS[h1] : undefined;
+};
 
 describe("App shell", () => {
   test("an administrator sees all six tabs on a top bar and starts on the dashboard", async () => {
