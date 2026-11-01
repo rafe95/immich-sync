@@ -10,6 +10,7 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "21.0.4",
     "@skeletonlabs/skeleton": "5.0.1",
     "@skeletonlabs/skeleton-svelte": "5.0.1",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
