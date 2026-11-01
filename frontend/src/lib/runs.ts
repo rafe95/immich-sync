@@ -261,6 +261,39 @@ export type StepSummaryView = {
   failures: FailedAsset[];
 };
 
+/** Counts from a step summary object (the engine's StepSummary); null when it reported no assetsFound. */
+export function totalsOf(sum: unknown): StepTotals | null {
+  if (!isObj(sum) || num(sum.assetsFound) === null) return null;
+  const n = (k: string) => num(sum[k]) ?? 0;
+  const dryRun = sum.dryRun === true;
+  const moved = dryRun ? n("wouldMove") : n("moved");
+  const copied = dryRun ? n("wouldCopy") : n("copied");
+  const synced = dryRun ? n("wouldSync") : n("synced");
+  const pick = moved > 0 ? ([moved, "moved"] as const) : copied > 0 ? ([copied, "copied"] as const) : synced > 0 ? ([synced, "synced"] as const) : ([0, "done"] as const);
+  return {
+    found: n("assetsFound"),
+    done: pick[0],
+    doneLabel: pick[1],
+    skipped: n("skipped") + n("unchanged"),
+    inTargetTrash: n("inTargetTrash"),
+    failed: n("failed"),
+    cancelled: n("cancelled"),
+    bytes: dryRun ? n("bytesToTransfer") : n("bytesCopied"),
+    dryRun,
+  };
+}
+
+/** "45 s", "12 min", "1 h 5 min" for a duration in milliseconds. */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "-";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+}
+
 /** Stored summary events of the form { step, status, summary } (see backend runner) into one block per step. Pure. */
 export function stepSummaries(summaries: RunEvent[], failures: FailedAsset[] = []): StepSummaryView[] {
   const out: StepSummaryView[] = [];
@@ -268,26 +301,7 @@ export function stepSummaries(summaries: RunEvent[], failures: FailedAsset[] = [
     if (!isObj(ev.data) || typeof ev.data.step !== "number") continue;
     const step = ev.data.step;
     const sum = isObj(ev.data.summary) ? ev.data.summary : null;
-    const n = (k: string) => num(sum?.[k]) ?? 0;
-    let totals: StepTotals | null = null;
-    if (sum && num(sum.assetsFound) !== null) {
-      const dryRun = sum.dryRun === true;
-      const moved = dryRun ? n("wouldMove") : n("moved");
-      const copied = dryRun ? n("wouldCopy") : n("copied");
-      const synced = dryRun ? n("wouldSync") : n("synced");
-      const pick = moved > 0 ? ([moved, "moved"] as const) : copied > 0 ? ([copied, "copied"] as const) : synced > 0 ? ([synced, "synced"] as const) : ([0, "done"] as const);
-      totals = {
-        found: n("assetsFound"),
-        done: pick[0],
-        doneLabel: pick[1],
-        skipped: n("skipped") + n("unchanged"),
-        inTargetTrash: n("inTargetTrash"),
-        failed: n("failed"),
-        cancelled: n("cancelled"),
-        bytes: dryRun ? n("bytesToTransfer") : n("bytesCopied"),
-        dryRun,
-      };
-    }
+    const totals = totalsOf(sum);
     const existing = out.findIndex((x) => x.step === step);
     const view: StepSummaryView = {
       step,

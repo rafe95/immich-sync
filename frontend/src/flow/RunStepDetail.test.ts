@@ -14,6 +14,8 @@ function state(patch: Partial<ConsoleState>): ConsoleState {
   return { ...initialConsole(), ...patch };
 }
 
+const tiles = (root: HTMLElement) => [...root.querySelectorAll("dl > div")].map((d) => `${d.querySelector("dt")!.textContent} ${d.querySelector("dd")!.textContent}`);
+
 describe("RunStepDetail", () => {
   test("shows a hint until a step is selected", async () => {
     const root = render(await component(), { progress: initialConsole(), selected: null });
@@ -35,17 +37,16 @@ describe("RunStepDetail", () => {
       ],
     });
     const root = render(await component(), { progress, selected: 1 });
-    const text = root.textContent!.replace(/\s+/g, " ");
-    expect(text).toContain("Found 10 · 7 copied · 2 skipped · 1 failed");
-    expect(text).not.toContain("99");
+    expect(tiles(root)).toEqual(["Found 10", "copied 7", "Skipped 2", "In target trash 0", "Failed 1", "Bytes 2.00 KB"]);
+    expect(root.textContent).not.toContain("99");
   });
 
   test("a dry run says would be", async () => {
     const progress = state({ summaries: [summary(1, { assetsFound: 5, dryRun: true, wouldMove: 3, inTargetTrash: 1 })] });
     const root = render(await component(), { progress, selected: 1 });
-    const text = root.textContent!.replace(/\s+/g, " ");
-    expect(text).toContain("3 would be moved");
-    expect(text).toContain("1 in target trash (never re-uploaded)");
+    expect(tiles(root)).toContain("Would be moved 3");
+    expect(tiles(root)).toContain("In target trash 1");
+    expect(root.textContent).toContain("never re-uploaded");
   });
 
   test("lists live failures of the selected step", async () => {
@@ -57,7 +58,21 @@ describe("RunStepDetail", () => {
     });
     const root = render(await component(), { progress, selected: 1 });
     expect(root.querySelectorAll("li").length).toBe(1);
-    expect(root.textContent).toContain("IMG_1.jpg: checksum mismatch");
+    expect(root.querySelector("li")!.textContent!.replace(/\s+/g, " ").trim()).toBe("IMG_1.jpg checksum mismatch");
+    expect(root.textContent).not.toContain("IMG_2.jpg");
+  });
+
+  test("the failed tile is in the error tone only when something failed", async () => {
+    const withFail = render(await component(), { progress: state({ summaries: [summary(1, { assetsFound: 3, copied: 2, failed: 1 })] }), selected: 1 });
+    expect(withFail.querySelector(".preset-tonal-error")).not.toBeNull();
+    const clean = render(await component(), { progress: state({ summaries: [summary(1, { assetsFound: 3, copied: 3 })] }), selected: 1 });
+    expect(clean.querySelector(".preset-tonal-error")).toBeNull();
+  });
+
+  test("the title names the operation and instances when the step settings are given", async () => {
+    const steps = [{ position: 1, operation: "move" as const, source: { id: "a", alias: "Phone" }, target: { id: "b", alias: "NAS" }, options: { range: null, kind: "all" as const, metadata: true, dryRun: false } }];
+    const root = render(await component(), { progress: initialConsole(), selected: 1, steps });
+    expect(root.textContent).toContain("Move Phone → NAS");
   });
 
   test("Show all steps clears the selection", async () => {
