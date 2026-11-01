@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Handle, Position, type NodeProps } from "@xyflow/svelte";
   import type { InstanceNodeData } from "../lib/flow/ops.ts";
+  import { agoText } from "../lib/flow/live.ts";
 
   let { data }: NodeProps = $props();
   const d = $derived(data as unknown as InstanceNodeData);
@@ -22,10 +23,12 @@
     <span class="ml-auto h-2 w-2 shrink-0 rounded-full {dotCls[d.health.tone]}" title={d.health.label} role="img" aria-label={d.health.label}></span>
   </div>
   <div class="grid grid-cols-2 gap-x-2 gap-y-1.5 px-3 py-2.5 text-xs">
-    <span class="opacity-60">Version</span><span>{d.version ? `v${d.version.replace(/^v/, "")}` : "Unknown"}</span>
-    <span class="opacity-60">Status</span><span class="font-medium {textCls[d.health.tone]}">{d.health.label}</span>
-    {#if d.checkedAt}<span class="opacity-60">Checked</span><span>{new Date(d.checkedAt).toLocaleString()}</span>{/if}
+    <span class="opacity-60">Version</span><span class="{d.health.tone === 'ok' ? '' : `font-semibold ${textCls[d.health.tone]}`}">{d.version ? `v${d.version.replace(/^v/, "")}` : "Unknown"}</span>
+    <span class="opacity-60">Checked</span><span title={d.checkedAt ? new Date(d.checkedAt).toLocaleString() : undefined}>{d.checkedAt ? agoText(d.checkedAt) : "Never"}</span>
   </div>
+  {#if d.health.tone !== "ok"}
+    <div class="mx-3 mb-2.5 rounded px-2 py-1 text-[11px] font-semibold {d.health.tone === 'error' ? 'preset-tonal-error' : 'preset-tonal-warning'}">{d.health.label}</div>
+  {/if}
   {#if d.activity}
     <div class="mx-3 mb-2.5 truncate rounded px-2 py-1 text-[11px] font-semibold {d.activity.kind === 'lock' ? 'preset-tonal-warning' : 'preset-tonal-primary'}" title={d.activity.job}>
       {#if d.activity.kind === "lock"}<span aria-hidden="true">🔒 </span>{/if}{activityLabel(d.activity)}

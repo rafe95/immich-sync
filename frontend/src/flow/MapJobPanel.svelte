@@ -1,13 +1,14 @@
 <script lang="ts">
   import { api } from "../lib/session.svelte.ts";
   import type { RunEvents } from "../lib/runEvents.svelte.ts";
-  import { countsText, recentLines } from "../lib/flow/live.ts";
+  import { liveTiles, recentLines } from "../lib/flow/live.ts";
   import type { MapInput } from "../lib/flow/map.ts";
   import type { JobRecord } from "../lib/jobs.ts";
-  import { progressPercent, statusLabel } from "../lib/runs.ts";
+  import { operationLabel, progressPercent, statusLabel } from "../lib/runs.ts";
 
   let {
     job,
+    step: stepPosition = 1,
     map,
     onopenrun,
     onopenjob,
@@ -16,6 +17,8 @@
     onclose,
   }: {
     job: JobRecord;
+    /** The step (line) that was clicked, 1-based. */
+    step?: number;
     map: MapInput;
     onopenrun?: (runId: string) => void;
     onopenjob?: (jobId: string) => void;
@@ -31,6 +34,12 @@
   const cs = $derived(stream?.state ?? null);
   const percent = $derived(progressPercent(cs?.progress ?? null));
   const lines = $derived(cs ? recentLines(cs.events, 4) : []);
+  const idx = $derived(Math.min(Math.max(stepPosition, 1), Math.max(job.steps.length, 1)) - 1);
+  const step = $derived(job.steps[idx] ?? null);
+  const alias = (id: string) => map.instances.find((i) => i.id === id)?.alias ?? "Unknown instance";
+  const tiles = $derived(cs ? liveTiles(cs.counts) : []);
+  const startedAt = $derived(active?.run.startedAt ? new Date(active.run.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null);
+  const scheduleChip = $derived(job.schedule ? `${job.schedule.enabled ? "Scheduled" : "Paused"} · ${job.schedule.cron} ${job.schedule.timezone}` : "Not scheduled");
   let busy = $state(false);
   let confirmCancel = $state(false);
   let error = $state<string | null>(null);
@@ -50,50 +59,67 @@
   }
 </script>
 
-<aside class="card preset-outlined-surface-200-800 bg-surface-50-950 space-y-3 p-4" aria-label="Job details">
-  <div class="flex items-start justify-between gap-2">
-    <div class="min-w-0">
-      <div class="text-[11px] font-semibold tracking-wide uppercase opacity-60">Selected job</div>
-      <h3 class="h5 break-all">{job.name}</h3>
-    </div>
-    <button type="button" class="btn btn-sm preset-tonal-surface" aria-label="Close panel" onclick={onclose}>×</button>
-  </div>
-  <p class="text-sm">{job.steps.length} step{job.steps.length === 1 ? "" : "s"}{job.schedule ? (job.schedule.enabled ? ", scheduled" : ", schedule paused") : ", not scheduled"}</p>
-  {#if active}
-    <p><span class="badge preset-tonal-primary">{active.queued ? "waiting for lock" : "running"}</span></p>
-    {#if cs}
-      <div class="space-y-1 text-sm">
-        {#if cs.progress}
-          <div class="flex justify-between gap-2">
-            <span>{cs.progress.label ?? "Progress"}</span>
-            <span>{cs.progress.done}{cs.progress.total !== null ? ` / ${cs.progress.total}` : ""}{percent !== null ? ` (${percent}%)` : ""}</span>
-          </div>
-          <progress class="h-2 w-full" max={cs.progress.total ?? undefined} value={cs.progress.total ? cs.progress.done : undefined} aria-label="Run progress"></progress>
-        {/if}
-        <p class="opacity-80">{countsText(cs.counts)}</p>
-        {#if lines.length}
-          <ul class="space-y-0.5 font-mono text-xs opacity-80" aria-label="Recent log lines">
-            {#each lines as line, i (i)}<li class="truncate" title={line}>{line}</li>{/each}
-          </ul>
-        {/if}
+<aside class="card preset-outlined-surface-200-800 bg-surface-50-950 flex h-full flex-col" aria-label="Job details">
+  <div class="space-y-2 border-b border-surface-200-800 p-4">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <div class="text-[11px] font-semibold tracking-wide uppercase opacity-60">Selected edge</div>
+        <h3 class="h4 break-words">{job.name}</h3>
       </div>
+      <button type="button" class="btn btn-sm preset-tonal-surface" aria-label="Close panel" onclick={onclose}>×</button>
+    </div>
+    {#if step}
+      <p class="text-sm opacity-80">{alias(step.sourceId)} → {alias(step.targetId)} · {operationLabel(step.operation)}, step {idx + 1} of {job.steps.length}</p>
     {/if}
     <div class="flex flex-wrap gap-2">
-      {#if onopenrun}<button type="button" class="btn btn-sm preset-filled-primary-500" onclick={() => onopenrun(active.run.id)}>Open run</button>{/if}
-      {#if onopenjob}<button type="button" class="btn btn-sm preset-tonal-surface" onclick={() => onopenjob(job.id)}>Open job</button>{/if}
-      {#if confirmCancel}
-        <button type="button" class="btn btn-sm preset-filled-error-500" disabled={busy} onclick={() => act(() => api.cancelRun(active.run.id))}>Confirm cancel</button>
-        <button type="button" class="btn btn-sm preset-tonal-surface" onclick={() => (confirmCancel = false)}>Keep running</button>
-      {:else}
-        <button type="button" class="btn btn-sm preset-tonal-error" onclick={() => (confirmCancel = true)}>Cancel run</button>
+      {#if active}<span class="badge preset-tonal-primary font-semibold">{active.queued ? "Waiting for lock" : "Running"}</span>{/if}
+      <span class="badge preset-tonal-surface">{scheduleChip}</span>
+    </div>
+  </div>
+  <div class="flex-1 space-y-4 p-4">
+    {#if active}
+      {#if cs}
+        {#if cs.progress}
+          <div class="space-y-1.5 text-sm">
+            <div class="flex justify-between gap-2"><strong>{cs.progress.label ?? "Progress"}</strong><span>{cs.progress.done}{cs.progress.total !== null ? ` / ${cs.progress.total}` : ""}{percent !== null ? ` (${percent}%)` : ""}</span></div>
+            <progress class="h-2 w-full" max={cs.progress.total ?? undefined} value={cs.progress.total ? cs.progress.done : undefined} aria-label="Run progress"></progress>
+            {#if startedAt}<p class="text-xs opacity-70">Started {startedAt}</p>{/if}
+          </div>
+        {/if}
+        <div class="grid grid-cols-2 gap-2">
+          {#each tiles as t (t.label)}
+            <div class="rounded-container p-3 {t.tone === 'error' ? 'preset-tonal-error' : 'bg-surface-100-900'}">
+              <div class="text-xs {t.tone === 'error' ? '' : 'opacity-70'}">{t.label}</div>
+              <div class="text-xl font-bold">{t.value}</div>
+            </div>
+          {/each}
+        </div>
+        {#if lines.length}
+          <div class="space-y-1.5">
+            <div class="text-sm font-semibold">Live log</div>
+            <ul class="space-y-0.5 rounded-container bg-surface-950-50 p-3 font-mono text-xs text-surface-50-950" aria-label="Recent log lines">
+              {#each lines as line, i (i)}<li class="truncate" title={line}>{line}</li>{/each}
+            </ul>
+          </div>
+        {/if}
       {/if}
-    </div>
-  {:else}
-    <p class="text-sm opacity-70">{last ? `Last run: ${statusLabel(last.status)}` : "Never run."}</p>
-    <div class="flex flex-wrap gap-2">
-      {#if onopenjob}<button type="button" class="btn btn-sm preset-filled-primary-500" onclick={() => onopenjob(job.id)}>Open job</button>{/if}
-      <button type="button" class="btn btn-sm preset-tonal-primary" disabled={busy} onclick={() => act(() => api.runJob(job.id, true))}>Dry run</button>
-    </div>
-  {/if}
-  {#if error}<p class="text-sm text-error-500" role="alert">{error}</p>{/if}
+      <div class="flex flex-wrap gap-2">
+        {#if onopenrun}<button type="button" class="btn flex-1 preset-filled-primary-500" onclick={() => onopenrun(active.run.id)}>Open run</button>{/if}
+        {#if confirmCancel}
+          <button type="button" class="btn flex-1 preset-filled-error-500" disabled={busy} onclick={() => act(() => api.cancelRun(active.run.id))}>Confirm cancel</button>
+          <button type="button" class="btn flex-1 preset-tonal-surface" onclick={() => (confirmCancel = false)}>Keep running</button>
+        {:else}
+          <button type="button" class="btn flex-1 preset-outlined-error-500" onclick={() => (confirmCancel = true)}>Cancel run</button>
+        {/if}
+        {#if onopenjob}<button type="button" class="btn w-full preset-tonal-surface" onclick={() => onopenjob(job.id)}>Open job</button>{/if}
+      </div>
+    {:else}
+      <p class="text-sm opacity-70">{last ? `Last run: ${statusLabel(last.status)}` : "Never run."}</p>
+      <div class="flex flex-wrap gap-2">
+        {#if onopenjob}<button type="button" class="btn flex-1 preset-filled-primary-500" onclick={() => onopenjob(job.id)}>Open job</button>{/if}
+        <button type="button" class="btn flex-1 preset-tonal-primary" disabled={busy} onclick={() => act(() => api.runJob(job.id, true))}>Dry run</button>
+      </div>
+    {/if}
+    {#if error}<p class="text-sm text-error-500" role="alert">{error}</p>{/if}
+  </div>
 </aside>

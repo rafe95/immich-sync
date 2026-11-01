@@ -57,3 +57,27 @@ export function countsText(counts: Record<string, number>): string {
   names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   return names.length ? names.map((k) => `${counts[k]} ${k}`).join(" · ") : "No assets processed yet";
 }
+
+/** "just now", "4 min ago", "3 h ago", "2 d ago" for an ISO time; the input itself when it is not a date. */
+export function agoText(iso: string, now = Date.now()): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return iso;
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
+export type LiveTile = { label: string; value: number; tone: "plain" | "error" };
+
+/** The four live tiles of the job panel from the per-outcome asset counts of a running step. */
+export function liveTiles(counts: Record<string, number>): LiveTile[] {
+  const n = (k: string) => counts[k] ?? 0;
+  return [
+    { label: "Copied + verified", value: n("copied") + n("moved") + n("synced"), tone: "plain" },
+    { label: "Already on target", value: n("skipped"), tone: "plain" },
+    { label: "In target trash · skipped", value: n("in-target-trash"), tone: "plain" },
+    { label: "Failed", value: n("failed"), tone: n("failed") > 0 ? "error" : "plain" },
+  ];
+}

@@ -23,8 +23,14 @@ body {
   --xy-controls-button-color: var(--color-surface-950-50);
   --xy-controls-button-border-color: var(--color-surface-300-700);
   --xy-minimap-background-color: var(--color-surface-100-900);
-  --xy-minimap-mask-background-color: color-mix(in srgb, var(--color-surface-500) 25%, transparent);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--color-surface-500) 10%, transparent);
   --xy-edge-label-background-color: var(--color-surface-100-900);
   --xy-edge-label-color: var(--color-surface-950-50);
   --xy-attribution-background-color: transparent;
+}
+
+@keyframes immich-dash {
+  to {
+    stroke-dashoffset: -12;
+  }
 }
