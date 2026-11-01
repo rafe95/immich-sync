@@ -32,6 +32,6 @@
 <EdgeLabel
   x={path[1]}
   y={path[2]}
-  class="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium shadow-sm nodrag nopan {pill} {selected ? 'ring-2 ring-primary-500/40' : ''} {d.onselect ? 'cursor-pointer' : ''}"
+  class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] font-medium shadow-sm nodrag nopan {pill} {selected ? 'ring-2 ring-primary-500/40' : ''} {d.onselect ? 'cursor-pointer' : ''}"
   onclick={() => d.onselect?.()}
 >{#if d.style !== "running"}<span class="h-2 w-2 shrink-0 rounded-full {dot[d.tone]}"></span>{/if}{d.icon === "on-error" ? "⚠ " : ""}{d.label}</EdgeLabel>

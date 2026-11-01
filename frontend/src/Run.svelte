@@ -1,11 +1,16 @@
 <script lang="ts">
+  import Toggle from "./ui/Toggle.svelte";
   import { onMount } from "svelte";
   import OperationPicker from "./OperationPicker.svelte";
+  import Segmented from "./ui/Segmented.svelte";
   import RunSidePanels from "./RunSidePanels.svelte";
   import RunView from "./RunView.svelte";
+  import ConfirmDialog from "./ui/ConfirmDialog.svelte";
   import { ApiError, type Instance } from "./lib/api.ts";
   import { api } from "./lib/session.svelte.ts";
   import { buildRunBody, defaultForm, formFromRun, operationLabel, type Run, type RunForm } from "./lib/runs.ts";
+
+  const RANGE_OPTIONS = [{ value: "all", label: "All assets" }, { value: "window", label: "Date window" }] as const;
 
   let { activeRunId = $bindable(null), prefill = null }: { activeRunId: string | null; prefill: RunForm | null } = $props();
 
@@ -17,7 +22,7 @@
   let form = $state<RunForm>(prefill ? { ...prefill } : defaultForm());
   let errors = $state<string[]>([]);
   let submitting = $state(false);
-  let confirmDialog = $state<HTMLDialogElement | null>(null);
+  let confirmOpen = $state(false);
   let pendingDryRun = $state(false);
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -61,14 +66,14 @@
     }
     if (form.operation === "move" && !dryRun) {
       pendingDryRun = dryRun;
-      confirmDialog?.showModal();
+      confirmOpen = true;
       return;
     }
     void send(dryRun);
   }
 
   async function send(dryRun: boolean) {
-    confirmDialog?.close();
+    confirmOpen = false;
     const built = buildRunBody(form, { source: source?.alias, target: target?.alias }, dryRun);
     if (!built.ok) return;
     submitting = true;
@@ -141,10 +146,7 @@
 
         <fieldset class="space-y-2">
           <legend class="label-text">Date taken</legend>
-          <div class="flex flex-wrap gap-4">
-            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range" value="all" bind:group={form.rangeMode} /> All assets</label>
-            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range" value="window" bind:group={form.rangeMode} /> Date window</label>
-          </div>
+          <Segmented options={RANGE_OPTIONS} value={form.rangeMode} name="range" ariaLabel="Date taken" onchange={(v) => (form.rangeMode = v)} />
           {#if form.rangeMode === "window"}
             <div class="grid gap-4 sm:grid-cols-2">
               <label class="label"><span class="label-text">From (optional)</span><input class="input" type="date" bind:value={form.from} /></label>
@@ -163,27 +165,21 @@
           </select>
         </label>
 
-        <label class="flex items-start gap-3">
-          <input class="checkbox mt-1" type="checkbox" bind:checked={form.metadata} disabled={form.operation === "sync_metadata"} />
-          <span>Sync metadata{form.operation === "sync_metadata" ? " (always on for this operation)" : ""}</span>
-        </label>
+        <Toggle bind:checked={form.metadata} disabled={form.operation === "sync_metadata"} label={"Sync metadata" + (form.operation === "sync_metadata" ? " (always on for this operation)" : "")} />
 
         {#if form.operation !== "move"}
-          <label class="flex items-start gap-3">
-            <input class="checkbox mt-1" type="checkbox" bind:checked={form.includeTrashed} />
-            <span>
-              Include assets in the source's trash
-              <span class="block text-sm opacity-70">Off by default. This only affects the source: an asset found only in the target's trash is still skipped, never uploaded again.</span>
-            </span>
-          </label>
+          <Toggle
+            bind:checked={form.includeTrashed}
+            label="Include assets in the source's trash"
+            hint="Off by default. This only affects the source: an asset found only in the target's trash is still skipped, never uploaded again."
+          />
         {/if}
 
-        <label class="flex items-start gap-3 rounded-container p-3 {form.dryRun ? 'preset-tonal-success' : 'preset-tonal-warning'}">
-          <input class="checkbox mt-1" type="checkbox" bind:checked={form.dryRun} />
-          <span>
+        <div class="rounded-container p-3 {form.dryRun ? 'preset-tonal-success' : 'preset-tonal-warning'}">
+          <Toggle bind:checked={form.dryRun}>
             <strong>Dry run</strong>: inspect and report only. {form.dryRun ? "No changes are made on either server." : "Off: this run will change the target" + (isMove ? " and trash source assets after verification." : ".")}
-          </span>
-        </label>
+          </Toggle>
+        </div>
 
         <p class="bg-surface-100-900 rounded-container p-3 text-sm" aria-live="polite"><strong>Summary:</strong> {summary}</p>
 
@@ -206,17 +202,19 @@
     </div>
   {/if}
 
-  <dialog bind:this={confirmDialog} class="card preset-filled-surface-100-900 m-auto max-w-lg space-y-3 p-5 shadow-xl backdrop:bg-black/50" aria-labelledby="confirm-title">
-    <h2 id="confirm-title" class="h5">Move assets from {source?.alias ?? "the source"}?</h2>
+  <ConfirmDialog
+    open={confirmOpen}
+    title="Move assets from {source?.alias ?? 'the source'}?"
+    confirmLabel="Move and trash on {source?.alias}"
+    tone="danger"
+    onconfirm={() => send(pendingDryRun)}
+    oncancel={() => (confirmOpen = false)}
+  >
     <p>
       Each asset is copied to <strong>{target?.alias}</strong> and checked there first. Only after it is verified (and its metadata synced, if enabled) is it sent to the
       <strong>trash</strong> of <strong>{source?.alias}</strong>. Nothing is permanently deleted, and you can restore trashed assets from that server.
     </p>
-    <div class="flex flex-wrap justify-end gap-2">
-      <button type="button" class="btn preset-tonal-surface" onclick={() => confirmDialog?.close()}>Cancel</button>
-      <button type="button" class="btn preset-filled-error-500" onclick={() => send(pendingDryRun)}>Move and trash on {source?.alias}</button>
-    </div>
-  </dialog>
+  </ConfirmDialog>
 
   {#if activeRunId}
     <hr class="border-surface-200-800" />

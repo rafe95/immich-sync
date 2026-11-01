@@ -64,7 +64,7 @@
         {/each}
       </SegmentedControl.Control>
     </SegmentedControl>
-    {#if isMove}<p class="rounded-container bg-warning-100-900 p-3 text-sm text-warning-900-100">Move verifies each asset on the target, then sends the source asset to the source's trash. Nothing is permanently deleted.</p>{/if}
+    {#if isMove}<p class="rounded-container p-3 text-sm preset-tonal-warning">Move verifies each asset on the target, then sends the source asset to the source's trash. Nothing is permanently deleted.</p>{/if}
   </div>
 
   <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
@@ -140,7 +140,7 @@
   </div>
 
   {#if problems.length}
-    <ul class="list-disc rounded-container bg-warning-100-900 py-2 pr-3 pl-7 text-sm text-warning-900-100">{#each problems as p (p)}<li>{p}</li>{/each}</ul>
+    <ul class="list-disc rounded-container py-2 pr-3 pl-7 text-sm preset-tonal-warning">{#each problems as p (p)}<li>{p}</li>{/each}</ul>
   {/if}
   </div>
 </aside>

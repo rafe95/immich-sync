@@ -106,6 +106,9 @@
   // One event stream per run, handed to the console (and later the diagram).
   let events = $state<RunEvents | null>(null);
   let stepFilter = $state<number | null>(null);
+  // Without a pick on the diagram the details follow the step that is live now, else the last one that started.
+  const runningStep = $derived(run?.steps.find((s) => s.status === "running")?.position ?? null);
+  const detailStep = $derived(stepFilter ?? runningStep ?? [...(run?.steps ?? [])].reverse().find((s) => s.status !== "pending")?.position ?? run?.steps[0]?.position ?? null);
   $effect(() => {
     if (!mode) return;
     const e = createRunEvents(api, runId, mode, () => void ended());
@@ -115,7 +118,7 @@
   });
 
   const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-  const summaryEntries = (v: unknown): [string, unknown][] => (isObj(v) ? Object.entries(v).filter(([, x]) => typeof x === "number" || typeof x === "string") : []);
+  const summaryEntries = (v: unknown): [string, unknown][] => (isObj(v) ? Object.entries(v).filter(([, x]) => (typeof x === "number" && x !== 0) || (typeof x === "string" && x !== "")) : []);
 </script>
 
 <div class="space-y-4">
@@ -158,7 +161,7 @@
     <div class="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
       <div class="space-y-4">
         {#if events && run.settings.steps.length}
-          <RunStepDetail progress={events.state} steps={run.settings.steps} bind:selected={stepFilter} />
+          <RunStepDetail progress={events.state} steps={run.settings.steps} selected={detailStep} explicit={stepFilter !== null} liveStep={runningStep} onclear={() => (stepFilter = null)} />
         {/if}
         <div class="card preset-outlined-surface-200-800 space-y-2 p-3">
           <h3 class="h6">Settings</h3>

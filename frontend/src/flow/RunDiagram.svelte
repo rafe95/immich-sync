@@ -26,6 +26,6 @@
   }
 </script>
 
-<div class="h-72">
+<div class="h-56">
   <FlowCanvas bind:nodes bind:edges {nodeTypes} onnodeclick={pick} />
 </div>

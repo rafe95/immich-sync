@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Handle, Position, type NodeProps } from "@xyflow/svelte";
+  import ProgressBar from "../ui/ProgressBar.svelte";
   import { opLabel, opTone, type StepNodeData } from "../lib/flow/ops.ts";
 
   let { data }: NodeProps = $props();
@@ -23,7 +24,7 @@
   {#if d.chips.length}
     <div class="flex flex-wrap gap-1">{#each d.chips as chip}<span class="badge preset-tonal-surface">{chip}</span>{/each}</div>
   {/if}
-  {#if d.percent !== null}<progress class="progress w-full" value={d.percent} max="100"></progress>{/if}
+  {#if d.percent !== null}<ProgressBar percent={d.percent} label="Step progress" />{/if}
   {#each d.problems as p}<div class="text-xs text-error-600-400">{p}</div>{/each}
   <Handle type="source" position={vertical ? Position.Bottom : Position.Right} />
 </div>

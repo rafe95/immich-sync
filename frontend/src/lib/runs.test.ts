@@ -132,6 +132,13 @@ describe("end-of-run summary", () => {
     expect(lineVisible(ev(4, "log", "warning", {}, "w"), f)).toBe(true);
     expect(lineVisible(ev(5, "log", "info", {}, "i"), { ...f, failuresOnly: false })).toBe(true);
   });
+
+  test("progress ticks are log lines only at the debug level", () => {
+    const tick = ev(6, "progress", "info", { step: 1, done: 1, total: 5 }, "");
+    const all = { minRank: 1, rank: 1, showAssets: true, failuresOnly: false };
+    expect(lineVisible(tick, all)).toBe(false);
+    expect(lineVisible(tick, { ...all, minRank: 0 })).toBe(true);
+  });
 });
 
 test("a skipped schedule firing is terminal, filterable and has a neutral badge", () => {

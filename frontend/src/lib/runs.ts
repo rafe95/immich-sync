@@ -335,5 +335,7 @@ export function lineVisible(ev: RunEvent, f: { minRank: number; rank: number; sh
     const a = assetOf(ev);
     return a ? a.outcome === "failed" : ev.level === "error" || ev.level === "warning";
   }
+  // Progress ticks drive the bar; as log lines they are raw JSON, so they only show at the debug level.
+  if (ev.type === "progress" && f.minRank > 0) return false;
   return f.rank >= f.minRank && (f.showAssets || ev.type !== "asset");
 }

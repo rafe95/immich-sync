@@ -7,16 +7,48 @@
 /* Tailwind's dark: variant follows the explicit choice made in the header; "system" leaves data-mode unset. */
 @custom-variant dark (&:where([data-mode=dark], [data-mode=dark] *));
 
-/* Light theme: a soft grey page with white cards and header, as in the design mocks. Dark keeps its single dark surface. */
-body {
-  background-color: light-dark(oklch(0.97 0.003 260), transparent);
+/*
+ * Page and card surfaces. Light: a soft grey page with white cards and header, as in the design mocks. Dark: a near-black page with
+ * slightly lighter cards, so panels read as layers instead of blending into the background.
+ */
+:root {
+  --app-page: light-dark(oklch(0.97 0.003 260), oklch(0.145 0.005 260));
+  --app-card: light-dark(var(--color-surface-50), oklch(0.2 0.006 260));
+  --app-canvas: light-dark(var(--color-surface-50), oklch(0.165 0.006 260));
 }
-.card.preset-outlined-surface-200-800 {
-  background-color: var(--color-surface-50-950);
+body {
+  background-color: var(--app-page);
+}
+.card.preset-outlined-surface-200-800,
+.bg-surface-50-950,
+.preset-filled-surface-50-950 {
+  background-color: var(--app-card);
+}
+
+/*
+ * Soft tonal colours. Skeleton's preset-tonal-* use mid-saturation shades that read as solid blocks on a dark page (and bright mint or
+ * orange on a light one). These keep the same class names but wash the colour into the surface instead.
+ */
+.preset-tonal-warning,
+.bg-warning-100-900 {
+  background-color: color-mix(in oklab, var(--color-warning-500) 15%, transparent);
+  color: light-dark(var(--color-warning-950), var(--color-warning-300));
+}
+.preset-tonal-success {
+  background-color: color-mix(in oklab, var(--color-success-500) 15%, transparent);
+  color: light-dark(var(--color-success-950), var(--color-success-300));
+}
+.preset-tonal-error {
+  background-color: color-mix(in oklab, var(--color-error-500) 15%, transparent);
+  color: light-dark(var(--color-error-950), var(--color-error-300));
+}
+.preset-tonal-tertiary {
+  background-color: color-mix(in oklab, var(--color-tertiary-500) 15%, transparent);
+  color: light-dark(var(--color-tertiary-950), var(--color-tertiary-300));
 }
 
 .svelte-flow {
-  --xy-background-color: var(--color-surface-50-950);
+  --xy-background-color: var(--app-canvas);
   --xy-background-pattern-color: var(--color-surface-300-700);
   --xy-controls-button-background-color: var(--color-surface-100-900);
   --xy-controls-button-background-color-hover: var(--color-surface-200-800);

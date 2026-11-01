@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ProgressBar from "../ui/ProgressBar.svelte";
   import { api } from "../lib/session.svelte.ts";
   import type { RunEvents } from "../lib/runEvents.svelte.ts";
   import { liveTiles, recentLines } from "../lib/flow/live.ts";
@@ -99,7 +100,7 @@
         {#if cs.progress}
           <div class="space-y-1.5 text-sm">
             <div class="flex justify-between gap-2"><strong>{cs.progress.label ?? "Progress"}</strong><span>{cs.progress.done}{cs.progress.total !== null ? ` / ${cs.progress.total}` : ""}{percent !== null ? ` (${percent}%)` : ""}</span></div>
-            <progress class="h-2 w-full" max={cs.progress.total ?? undefined} value={cs.progress.total ? cs.progress.done : undefined} aria-label="Run progress"></progress>
+            <ProgressBar value={cs.progress.total ? cs.progress.done : null} max={cs.progress.total} label="Run progress" />
             {#if startedAt}<p class="text-xs opacity-70">Started {startedAt}</p>{/if}
           </div>
         {/if}

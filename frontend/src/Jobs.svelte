@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import JobEditor from "./JobEditor.svelte";
+  import ConfirmDialog from "./ui/ConfirmDialog.svelte";
   import ScheduleEditor from "./ScheduleEditor.svelte";
   import { ApiError, type Instance } from "./lib/api.ts";
   import JobCard from "./JobCard.svelte";
@@ -20,8 +21,8 @@
   let mode = $state<{ kind: "list" } | { kind: "edit"; job: JobRecord | null } | { kind: "schedule"; jobId: string }>({ kind: "list" });
   let confirmDelete = $state<JobRecord | null>(null);
   let confirmRun = $state<JobRecord | null>(null);
-  let deleteDialog = $state<HTMLDialogElement | null>(null);
-  let runDialog = $state<HTMLDialogElement | null>(null);
+  let deleteOpen = $state(false);
+  let runOpen = $state(false);
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
   const alias = (id: string) => instances.find((i) => i.id === id)?.alias ?? "unknown instance";
@@ -67,13 +68,13 @@
   function runNow(job: JobRecord) {
     if (job.hasMove) {
       confirmRun = job;
-      runDialog?.showModal();
+      runOpen = true;
     } else void start(job, false);
   }
 
   async function doDelete() {
     const job = confirmDelete;
-    deleteDialog?.close();
+    deleteOpen = false;
     if (!job) return;
     busyId = job.id;
     try {
@@ -154,7 +155,7 @@
               ondry={() => start(job, true)}
               onedit={() => (mode = { kind: "edit", job })}
               onschedule={() => (mode = { kind: "schedule", jobId: job.id })}
-              ondelete={() => { confirmDelete = job; deleteDialog?.showModal(); }}
+              ondelete={() => { confirmDelete = job; deleteOpen = true; }}
             />
           </li>
         {/each}
@@ -162,21 +163,25 @@
     {/if}
   {/if}
 
-  <dialog bind:this={deleteDialog} class="card preset-filled-surface-100-900 m-auto max-w-lg space-y-3 p-5 backdrop:bg-black/50" aria-labelledby="del-title">
-    <h2 id="del-title" class="h5">Delete "{confirmDelete?.name}"?</h2>
+  <ConfirmDialog
+    open={deleteOpen}
+    title={`Delete "${confirmDelete?.name}"?`}
+    confirmLabel="Delete job"
+    tone="danger"
+    onconfirm={doDelete}
+    oncancel={() => (deleteOpen = false)}
+  >
     <p>The job and its schedule are removed. Past runs stay in History. No assets are touched.</p>
-    <div class="flex flex-wrap justify-end gap-2">
-      <button type="button" class="btn preset-tonal-surface" onclick={() => deleteDialog?.close()}>Cancel</button>
-      <button type="button" class="btn preset-filled-error-500" onclick={doDelete}>Delete job</button>
-    </div>
-  </dialog>
+  </ConfirmDialog>
 
-  <dialog bind:this={runDialog} class="card preset-filled-surface-100-900 m-auto max-w-lg space-y-3 p-5 backdrop:bg-black/50" aria-labelledby="run-title">
-    <h2 id="run-title" class="h5">Run "{confirmRun?.name}" for real?</h2>
+  <ConfirmDialog
+    open={runOpen}
+    title={`Run "${confirmRun?.name}" for real?`}
+    confirmLabel="Run and trash after verification"
+    tone="danger"
+    onconfirm={() => { const j = confirmRun; runOpen = false; if (j) void start(j, false); }}
+    oncancel={() => (runOpen = false)}
+  >
     <p>This job moves assets. Each is verified on its target first, then sent to the source server's trash. Nothing is permanently deleted. Consider a dry run first.</p>
-    <div class="flex flex-wrap justify-end gap-2">
-      <button type="button" class="btn preset-tonal-surface" onclick={() => runDialog?.close()}>Cancel</button>
-      <button type="button" class="btn preset-filled-error-500" onclick={() => { const j = confirmRun; runDialog?.close(); if (j) void start(j, false); }}>Run and trash after verification</button>
-    </div>
-  </dialog>
+  </ConfirmDialog>
 </div>
