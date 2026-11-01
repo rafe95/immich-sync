@@ -11,6 +11,7 @@
     nodeTypes = { instance: InstanceNode, step: StepNode } as unknown as NodeTypes,
     minimap = false,
     lockable = false,
+    fitMaxZoom = 1,
     fitKey,
     onnodeclick,
     onedgeclick,
@@ -23,6 +24,8 @@
     nodeTypes?: NodeTypes;
     minimap?: boolean;
     lockable?: boolean;
+    /** Largest zoom the initial fit may use; the map raises it so a few nodes read larger. */
+    fitMaxZoom?: number;
     onnodeclick?: (node: Node) => void;
     onedgeclick?: (edge: Edge) => void;
     onnodedragstop?: (node: Node) => void;
@@ -38,7 +41,7 @@
     {nodeTypes}
     {edgeTypes}
     fitView
-    fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
+    fitViewOptions={{ maxZoom: fitMaxZoom, padding: 0.2 }}
     nodesConnectable={false}
     nodesDraggable={lockable}
     deleteKey={null}

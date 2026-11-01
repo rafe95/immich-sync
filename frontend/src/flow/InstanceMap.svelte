@@ -115,9 +115,10 @@
 
 </script>
 
-<div class="space-y-3">
-  <div class="flex flex-wrap items-center justify-between gap-2">
+<section class="overflow-hidden rounded-container border border-surface-200-800 bg-surface-50-950" aria-label="Instance map">
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-surface-200-800 px-4 py-3">
     <div class="flex flex-wrap items-center gap-2">
+      <h2 class="mr-1 text-base font-semibold">Instances</h2>
       <button type="button" class="btn btn-sm preset-filled-primary-500" onclick={startAdd}>+ Add instance</button>
       <button type="button" class="btn btn-sm preset-tonal-surface" disabled={checkingAll || map.instances.length === 0} onclick={checkAll}>{checkingAll ? "Checking…" : "Check all"}</button>
       <div class="inline-flex gap-1 rounded-container bg-surface-100-900 p-1" role="group" aria-label="View">
@@ -126,25 +127,27 @@
       </div>
     </div>
     <ul class="flex flex-wrap items-center gap-4 text-xs" aria-label="Line colours">
-      <li class="flex items-center gap-1.5"><span class="inline-block h-1 w-5 rounded bg-primary-500"></span>Copy</li>
-      <li class="flex items-center gap-1.5"><span class="inline-block h-1 w-5 rounded bg-warning-500"></span>Move</li>
-      <li class="flex items-center gap-1.5"><span class="inline-block h-1 w-5 rounded bg-tertiary-500"></span>Sync metadata</li>
+      <li class="flex items-center gap-1.5"><span class="inline-block h-[3px] w-[18px] rounded bg-primary-500"></span>Copy</li>
+      <li class="flex items-center gap-1.5"><span class="inline-block h-[3px] w-[18px] rounded bg-warning-500"></span>Move</li>
+      <li class="flex items-center gap-1.5"><span class="inline-block h-[3px] w-[18px] rounded bg-tertiary-500"></span>Sync metadata</li>
+      <li class="flex items-center gap-1.5"><span class="inline-block w-[18px] border-t-[3px] border-dashed border-surface-700-300"></span>Running</li>
     </ul>
   </div>
   {#if notice}
-    <p class="text-sm" role="status">{notice}</p>
+    <p class="border-b border-surface-200-800 px-4 py-2 text-sm" role="status">{notice}</p>
   {/if}
 
   {#if map.instances.length === 0 && !adding}
-    <p class="text-sm opacity-70">No instances registered yet. Add one to get started.</p>
+    <p class="p-4 text-sm opacity-70">No instances registered yet. Add one to get started.</p>
   {:else}
-    <div class="grid gap-3 lg:grid-cols-[1fr_22rem]">
+    <div class="grid gap-4 p-4 lg:grid-cols-[1fr_22rem]">
       {#if mode === "map"}
-        <div class="h-96">
+        <div class="h-[32rem] min-h-80">
           <FlowCanvas
             bind:nodes
             bind:edges
             lockable
+            fitMaxZoom={1.4}
             {nodeTypes}
             onnodeclick={(n) => n.type === "instance" && !n.id.startsWith("unknown:") && selectInstance(n.id)}
             onedgeclick={(e) => selectJob((e.data as { jobId?: string } | undefined)?.jobId ?? null)}
@@ -167,10 +170,10 @@
       {/if}
     </div>
     {#if mode === "map"}
-      <p class="flex flex-wrap items-center justify-between gap-2 text-sm opacity-70">
-        <span>Drag instances to arrange them. Click an instance to manage it, or a job's line for details.</span>
+      <p class="flex flex-wrap items-center justify-between gap-2 border-t border-surface-200-800 px-4 py-2 text-xs opacity-70">
+        <span>Nodes are Immich instances, lines are job steps. Drag instances to arrange them; click an instance to manage it, or a line for details.</span>
         {#if map.instances.length > 0}<button type="button" class="anchor" onclick={resetLayout}>Reset layout</button>{/if}
       </p>
     {/if}
   {/if}
-</div>
+</section>

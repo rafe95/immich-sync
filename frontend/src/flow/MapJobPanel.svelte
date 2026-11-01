@@ -50,10 +50,13 @@
   }
 </script>
 
-<aside class="card preset-outlined-surface-200-800 space-y-3 p-4" aria-label="Job details">
+<aside class="card preset-outlined-surface-200-800 bg-surface-50-950 space-y-3 p-4" aria-label="Job details">
   <div class="flex items-start justify-between gap-2">
-    <h3 class="h6">{job.name}</h3>
-    <button type="button" class="btn btn-sm preset-tonal-surface" onclick={onclose}>Close</button>
+    <div class="min-w-0">
+      <div class="text-[11px] font-semibold tracking-wide uppercase opacity-60">Selected job</div>
+      <h3 class="h5 break-all">{job.name}</h3>
+    </div>
+    <button type="button" class="btn btn-sm preset-tonal-surface" aria-label="Close panel" onclick={onclose}>×</button>
   </div>
   <p class="text-sm">{job.steps.length} step{job.steps.length === 1 ? "" : "s"}{job.schedule ? (job.schedule.enabled ? ", scheduled" : ", schedule paused") : ", not scheduled"}</p>
   {#if active}
