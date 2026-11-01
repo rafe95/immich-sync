@@ -7,6 +7,14 @@
 /* Tailwind's dark: variant follows the explicit choice made in the header; "system" leaves data-mode unset. */
 @custom-variant dark (&:where([data-mode=dark], [data-mode=dark] *));
 
+/* Light theme: a soft grey page with white cards and header, as in the design mocks. Dark keeps its single dark surface. */
+body {
+  background-color: light-dark(oklch(0.97 0.003 260), transparent);
+}
+.card.preset-outlined-surface-200-800 {
+  background-color: var(--color-surface-50-950);
+}
+
 .svelte-flow {
   --xy-background-color: var(--color-surface-50-950);
   --xy-background-pattern-color: var(--color-surface-300-700);

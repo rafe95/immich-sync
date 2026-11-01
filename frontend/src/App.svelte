@@ -67,7 +67,7 @@
   <Login />
 {:else}
   <div class="grid min-h-screen grid-rows-[auto_1fr]">
-    <header class="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface-200-800 px-6 py-3">
+    <header class="flex flex-wrap items-center gap-x-6 gap-y-2 bg-surface-50-950 border-b border-surface-200-800 px-6 py-3">
       <div class="flex items-center gap-3">
         <img src="/favicon.svg" alt="" class="size-7" />
         <span class="text-lg font-semibold">Immich Sync</span>
