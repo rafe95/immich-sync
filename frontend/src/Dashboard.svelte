@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "./lib/session.svelte.ts";
   import { statusLabel } from "./lib/runs.ts";
-  import { checkError, inZone, instanceHealth, loadMapInput, refreshInterval, statusTone, type DashboardResponse } from "./lib/dashboard.ts";
+  import { inZone, loadMapInput, refreshInterval, statusTone, type DashboardResponse } from "./lib/dashboard.ts";
   import type { MapInput } from "./lib/flow/map.ts";
   import InstanceMap from "./flow/InstanceMap.svelte";
 
@@ -17,7 +17,6 @@
 
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "-");
   const toneCls = { success: "preset-tonal-success", error: "preset-tonal-error", warning: "preset-tonal-warning", neutral: "preset-tonal-surface", primary: "preset-tonal-primary" };
-  const healthCls = { ok: "preset-tonal-success", warn: "preset-tonal-warning", error: "preset-tonal-error" };
 
   async function load() {
     try {
@@ -92,35 +91,9 @@
     </section>
 
     <section aria-labelledby="d-map" class="space-y-2">
-      <h2 id="d-map" class="h5">Instance map</h2>
-      {#if !map || map.instances.length === 0}
-        <p class="text-sm opacity-70">Add an instance to see the map.</p>
-      {:else}
+      <h2 id="d-map" class="h5">Instances</h2>
+      {#if map}
         <InstanceMap {map} {onopenrun} onchanged={load} />
-      {/if}
-    </section>
-
-    <section aria-labelledby="d-inst" class="space-y-2">
-      <h2 id="d-inst" class="h5">Instances</h2>
-      {#if data.instances.length === 0}
-        <p class="text-sm opacity-70">No instances yet. Add one on the Instances screen.</p>
-      {:else}
-        <ul class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {#each data.instances as i (i.id)}
-            {@const h = instanceHealth(i)}
-            {@const err = checkError(i)}
-            <li class="card preset-outlined-surface-200-800 space-y-1 p-4">
-              <div class="flex items-center justify-between gap-2">
-                <span class="font-semibold">{i.alias}{i.isDefault ? " (default)" : ""}</span>
-                <span class="badge {healthCls[h.tone]}">{h.tone === "ok" ? "OK" : h.tone === "warn" ? "Warning" : "Error"}</span>
-              </div>
-              <p class="text-sm">{h.label}</p>
-              <p class="text-xs opacity-70">Immich {i.lastCheck?.version ?? "version unknown"}</p>
-              <p class="text-xs opacity-70">Last checked: {i.lastCheckedAt ? fmt(i.lastCheckedAt) : "never"}</p>
-              {#if err}<p class="text-xs text-error-600-400">{err}</p>{/if}
-            </li>
-          {/each}
-        </ul>
       {/if}
     </section>
 

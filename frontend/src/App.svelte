@@ -4,7 +4,6 @@
   import { checkSession, logout, session } from "./lib/session.svelte.ts";
   import Dashboard from "./Dashboard.svelte";
   import Jobs from "./Jobs.svelte";
-  import Instances from "./Instances.svelte";
   import Setup from "./Setup.svelte";
   import Users from "./Users.svelte";
   import { isAdmin } from "./lib/users.ts";
@@ -20,7 +19,6 @@
     { id: "run", label: "Run", enabled: true },
     { id: "jobs", label: "Jobs", enabled: true },
     { id: "history", label: "History", enabled: true },
-    { id: "instances", label: "Instances", enabled: true },
     { id: "users", label: "Users", enabled: true },
     { id: "settings", label: "Settings", enabled: true },
   ] as const;
@@ -107,9 +105,7 @@
       </nav>
 
       <main class="space-y-4 p-6">
-        {#if current === "instances"}
-          <Instances />
-        {:else if current === "users" && isAdmin(session.user)}
+        {#if current === "users" && isAdmin(session.user)}
           <Users />
         {:else if current === "settings"}
           <Settings />

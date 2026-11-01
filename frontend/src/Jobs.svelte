@@ -118,7 +118,7 @@
   {:else}
     <div>
       <button type="button" class="btn preset-filled-primary-500" disabled={instances.length < 2} onclick={() => (mode = { kind: "edit", job: null })}>New job</button>
-      {#if instances.length < 2}<span class="ml-2 text-sm opacity-70">A job needs two registered instances (Instances screen).</span>{/if}
+      {#if instances.length < 2}<span class="ml-2 text-sm opacity-70">A job needs two registered instances (add them on the Dashboard).</span>{/if}
     </div>
 
     {#if jobs.length === 0}
