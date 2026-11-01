@@ -130,13 +130,14 @@
 <div class="space-y-4">
   <h1 class="h3">Users</h1>
 
-  <div aria-live="polite" class="max-w-4xl">
+  <div aria-live="polite">
     {#if notice}
       <p class="rounded-lg px-3 py-2 text-sm {notice.kind === 'error' ? 'preset-tonal-error' : 'preset-tonal-success'}" role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</p>
     {/if}
   </div>
 
-  <section class="card preset-outlined-surface-200-800 bg-surface-50-950 max-w-4xl space-y-3 rounded-2xl p-5" aria-labelledby="users-title">
+  <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+  <section class="card preset-outlined-surface-200-800 bg-surface-50-950 space-y-3 rounded-2xl p-5" aria-labelledby="users-title">
     <h2 id="users-title" class="h5">Accounts</h2>
     {#if loadError}
       <p class="text-error-500" role="alert">Could not load users: {loadError}</p>
@@ -225,7 +226,7 @@
     {/if}
   </section>
 
-  <section class="card preset-outlined-surface-200-800 bg-surface-50-950 max-w-4xl space-y-3 rounded-2xl p-5" aria-labelledby="add-title">
+  <section class="card preset-outlined-surface-200-800 bg-surface-50-950 space-y-3 rounded-2xl p-5" aria-labelledby="add-title">
     <h2 id="add-title" class="h5">Add user</h2>
     <form class="space-y-3" onsubmit={addUser} novalidate>
       <div class="flex flex-wrap items-start gap-3">
@@ -253,4 +254,5 @@
       <button class="btn preset-filled-primary-500 font-semibold" type="submit" disabled={addBusy}>{addBusy ? "Adding…" : "Add user"}</button>
     </form>
   </section>
+  </div>
 </div>

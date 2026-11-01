@@ -143,7 +143,7 @@
   <div class="flex flex-wrap items-center gap-2">
     <h2 class="mr-1 text-base font-semibold">Instances</h2>
     <button type="button" class="btn btn-sm preset-filled-primary-500" onclick={startAdd}>+ Add instance</button>
-    <button type="button" class="btn btn-sm preset-tonal-surface" disabled={checkingAll || map.instances.length === 0} onclick={checkAll}>{checkingAll ? "Checking…" : "Check all"}</button>
+    <button type="button" class="btn btn-sm preset-outlined-surface-300-700" disabled={checkingAll || map.instances.length === 0} onclick={checkAll}>{checkingAll ? "Checking…" : "Check all"}</button>
     <div class="inline-flex gap-1 rounded-container bg-surface-100-900 p-1" role="group" aria-label="View">
       <button type="button" class="btn btn-sm {mode === 'map' ? 'preset-filled-surface-500' : ''}" aria-pressed={mode === "map"} onclick={() => (mode = "map")}>Map</button>
       <button type="button" class="btn btn-sm {mode === 'list' ? 'preset-filled-surface-500' : ''}" aria-pressed={mode === "list"} onclick={() => (mode = "list")}>List</button>

@@ -100,7 +100,7 @@
           <span class="badge preset-tonal-surface">Checking backend…</span>
         {/if}
         {#if session.user}
-          <span class="text-sm">{session.user.username} <span class="badge preset-tonal-surface">{session.user.role}</span></span>
+          <span class="text-sm">{session.user.username} <span class="badge preset-tonal-surface text-xs">{session.user.role}</span></span>
         {/if}
         <ThemeSelect />
         <button type="button" class="btn btn-sm preset-tonal-surface" onclick={logout}>Log out</button>
