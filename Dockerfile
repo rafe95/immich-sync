@@ -1,5 +1,7 @@
 # --- build: install everything, build the frontend ---------------------------
-FROM oven/bun:1.4.2-alpine AS build
+# Runs on the builder's own platform: the frontend bundle is architecture-independent, so a multi-arch
+# build does not emulate the whole frontend build under QEMU.
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.2-alpine AS build
 WORKDIR /app
 COPY package.json bun.lock ./
 COPY core/package.json core/
