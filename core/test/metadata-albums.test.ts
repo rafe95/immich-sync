@@ -227,13 +227,23 @@ describe("syncMetadataFields album membership", () => {
 
   test("requires album permissions during preflight before reading selected assets", async () => {
     const source = fake({ permissions: ["user.read", "asset.read"] });
-    const target = fake({ permissions: ["user.read", "asset.read", "asset.update", "album.read", "album.create"] });
+    // The target is complete; only the source lacks album.read (a target missing something too would make which side is reported timing-dependent).
+    const target = fake({ permissions: ["user.read", "asset.read", "asset.update", "album.read", "album.create", "albumAsset.create"] });
 
     await expect(syncMetadataFields(options(source, target, ["source-no-album-permission"]))).rejects.toThrow("album.read");
 
     expect(source.requests.some((request) => request.path.startsWith("/api/assets/"))).toBe(false);
     expect(target.requests.some((request) => request.path.startsWith("/api/assets/"))).toBe(false);
     expect(target.requests.some((request) => request.path === "/api/albums")).toBe(false);
+  });
+
+  test("when both sides lack permissions the source is reported, however slowly it answers", async () => {
+    const source = fake({ permissions: ["user.read", "asset.read"], responseDelayMs: 25 });
+    const target = fake({ permissions: ["user.read", "asset.read", "asset.update", "album.read", "album.create"] }); // lacks albumAsset.create
+
+    await expect(syncMetadataFields(options(source, target, ["both-lack-permissions"]))).rejects.toThrow(
+      "source metadata fields requires permissions: album.read",
+    );
   });
 
   test("requires target album creation and membership permissions before asset requests", async () => {

@@ -46,6 +46,8 @@ export type FakeImmichOptions = {
   /** Uploaded assets are returned without exifInfo by this many asset-info GETs (Infinity: never ready). */
   deferExifGets?: number;
   pageSize?: number;
+  /** Delays the answers of the instance-check routes (ping, version, user, key) to test which of two servers answers first. */
+  responseDelayMs?: number;
 };
 
 export type FakeAlbum = {
@@ -103,6 +105,7 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
   const uploadedMedia: Array<{ id: string; fileName: string; bytes: Uint8Array; livePhotoVideoId: string | null }> = [];
 
   const json = (data: unknown, status = 200) => Response.json(data, { status });
+  const delay = () => (options.responseDelayMs ? Bun.sleep(options.responseDelayMs) : undefined);
   const unauthorized = () => json({ message: "Invalid API key", statusCode: 401 }, 401);
   const authed = (req: Request) => req.headers.get("x-api-key") === apiKey;
   const albumResponse = (album: FakeAlbum) => ({
@@ -133,13 +136,15 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
     hostname: "127.0.0.1",
     port: 0,
     routes: {
-      "/api/server/ping": () => json({ res: "pong" }),
-      "/api/server/version": () => json({ ...version, prerelease: null }),
-      "/api/users/me": (req) => (authed(req) ? json({ ...user, isAdmin: false }) : unauthorized()),
-      "/api/api-keys/me": (req) =>
-        authed(req)
+      "/api/server/ping": async () => (await delay(), json({ res: "pong" })),
+      "/api/server/version": async () => (await delay(), json({ ...version, prerelease: null })),
+      "/api/users/me": async (req) => (await delay(), authed(req) ? json({ ...user, isAdmin: false }) : unauthorized()),
+      "/api/api-keys/me": async (req) => {
+        await delay();
+        return authed(req)
           ? json({ id: "k-1", name: "immich-sync", permissions, createdAt: "", updatedAt: "" })
-          : unauthorized(),
+          : unauthorized();
+      },
     },
     fetch: async (req) => {
       const url = new URL(req.url);
