@@ -95,7 +95,7 @@
     <div class="min-w-0 flex-1 space-y-1">
       <p class="text-sm opacity-70"><button type="button" class="anchor" onclick={oncancel}>Jobs</button> / {job ? "Edit" : "New"}</p>
       <label class="sr-only" for="job-name">Job name</label>
-      <input id="job-name" class="input h3 w-full max-w-xl" placeholder="Job name" bind:value={name} maxlength="100" required autocomplete="off" />
+      <input id="job-name" class="input w-full max-w-xl text-xl font-bold"placeholder="Job name" bind:value={name} maxlength="100" required autocomplete="off" />
     </div>
     <div class="flex flex-wrap gap-2">
       {#if job && onstart}
@@ -116,13 +116,13 @@
   <div class="grid gap-4 lg:grid-cols-[12rem_minmax(0,1fr)_22rem]">
     <div class="space-y-4">
       <StepPalette disabled={steps.length >= MAX_STEPS} onadd={(op) => addAt(op, steps.length)} />
-      <section class="card preset-tonal-surface space-y-1 p-3" aria-label="Checks">
-        <h3 class="font-semibold">Checks</h3>
-        {#if allProblems.length}
-          <ul class="list-disc pl-5 text-sm text-warning-700-300">{#each allProblems as p (p)}<li>{p}</li>{/each}</ul>
-        {:else}
-          <p class="text-sm">No problems found.</p>
-        {/if}
+      <section class="card preset-outlined-surface-200-800 space-y-2 p-3" aria-label="Checks">
+        <h3 class="text-xs font-semibold tracking-wide uppercase opacity-70">Checks</h3>
+        <ul class="space-y-1.5 text-sm">
+          <li class="flex gap-2"><span class="font-bold text-success-700-300" aria-hidden="true">✓</span>{steps.length} of {MAX_STEPS} steps</li>
+          {#each allProblems as p (p)}<li class="flex gap-2 text-warning-800-200"><span class="font-bold" aria-hidden="true">!</span>{p}</li>{/each}
+          {#if !allProblems.length}<li class="flex gap-2"><span class="font-bold text-success-700-300" aria-hidden="true">✓</span>No problems found.</li>{/if}
+        </ul>
       </section>
     </div>
 

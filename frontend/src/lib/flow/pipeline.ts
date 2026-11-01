@@ -9,7 +9,7 @@ export const PIPELINE_X = 0;
 export const SCHEDULE_ID = "schedule";
 export const ADD_ID = "add";
 
-export type ScheduleNodeData = { summary: string; nextRun: string | null; catchUp: boolean; enabled: boolean; warning: string | null };
+export type ScheduleNodeData = { summary: string; nextRun: string | null; catchUp: boolean; enabled: boolean; warning: string | null; cron: string; timezone: string };
 export type AddNodeData = { disabled: boolean };
 
 type PipelineInput = { steps: StepForm[]; schedule: ScheduleRecord | null; instances: Instance[]; selectedKey: string | null };
@@ -32,7 +32,8 @@ export function scheduleWarning(schedule: ScheduleRecord | null, steps: StepForm
 
 function chips(s: StepForm): string[] {
   const out: string[] = [s.kind === "all" ? "photos and videos" : `${s.kind} only`];
-  if (s.rangeMode === "lastDays") out.push(`last ${s.lastDays} days`);
+  if (s.rangeMode === "all") out.push("all assets");
+  else if (s.rangeMode === "lastDays") out.push(`last ${s.lastDays} days`);
   else if (s.rangeMode === "window") out.push(`${s.from || "…"} to ${s.to || "…"}`);
   if (s.operation !== "sync_metadata") out.push(s.metadata ? "metadata on" : "metadata off");
   if (s.includeAlbums) out.push("albums");
@@ -52,6 +53,7 @@ export function buildPipeline(input: PipelineInput): { nodes: Node[]; edges: Edg
   if (schedule) {
     const data: ScheduleNodeData = {
       summary: scheduleSummary(schedule), nextRun: schedule.nextRuns[0] ?? null, catchUp: schedule.catchUp, enabled: schedule.enabled, warning: scheduleWarning(schedule, steps),
+      cron: schedule.cron, timezone: schedule.timezone,
     };
     nodes.push({ id: SCHEDULE_ID, type: "schedule", position: { x: PIPELINE_X, y: 0 }, data, draggable: false, selectable: false });
   }

@@ -2,7 +2,7 @@
   import type { Edge, Node, NodeTypes } from "@xyflow/svelte";
   import FlowCanvas from "./FlowCanvas.svelte";
   import InstanceNode from "./InstanceNode.svelte";
-  import StepNode from "./StepNode.svelte";
+  import JobStepNode from "./JobStepNode.svelte";
   import ScheduleNode from "./ScheduleNode.svelte";
   import AddNode from "./AddNode.svelte";
   import type { Instance } from "../lib/api.ts";
@@ -30,7 +30,7 @@
     oneditschedule?: () => void;
   } = $props();
 
-  const nodeTypes = { instance: InstanceNode, step: StepNode, schedule: ScheduleNode, add: AddNode } as unknown as NodeTypes;
+  const nodeTypes = { instance: InstanceNode, step: JobStepNode, schedule: ScheduleNode, add: AddNode } as unknown as NodeTypes;
   const atMax = $derived(steps.length >= MAX_STEPS);
   const firstStepY = $derived(schedule ? STEP_GAP : 0);
 

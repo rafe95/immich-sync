@@ -8,5 +8,5 @@
 
 <div class="w-72">
   <Handle type="target" position={Position.Top} />
-  <button type="button" class="btn preset-tonal-primary w-full border border-dashed nodrag nopan" disabled={d.disabled} onclick={() => d.onadd?.()}>+ Add step</button>
+  <button type="button" class="btn preset-filled-surface-50-950 mx-auto flex h-11 w-44 rounded-xl border-2 border-dashed border-surface-400-600 font-semibold nodrag nopan" disabled={d.disabled} onclick={() => d.onadd?.()}>+ Add step</button>
 </div>

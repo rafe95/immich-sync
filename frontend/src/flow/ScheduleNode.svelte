@@ -7,15 +7,20 @@
   const d = $derived(data as unknown as ScheduleNodeData & { onedit?: () => void });
 </script>
 
-<div class="card preset-filled-surface-100-900 w-72 space-y-2 border border-surface-300-700 p-3">
-  <div class="flex items-center justify-between gap-2">
-    <span class="font-semibold">Schedule</span>
-    {#if !d.enabled}<span class="badge preset-tonal-surface">paused</span>{/if}
+<div class="card preset-filled-surface-950-50 w-72 space-y-1 p-3">
+  <div class="flex items-center gap-2 text-xs font-semibold tracking-wide uppercase opacity-80">
+    <span aria-hidden="true">◷</span> Trigger · Schedule
+    {#if !d.enabled}<span class="badge preset-tonal-surface ml-auto">paused</span>{/if}
   </div>
-  <div class="text-sm">{d.summary}</div>
-  {#if d.nextRun}<div class="text-xs opacity-70">Next run {formatWhen(d.nextRun)}</div>{/if}
-  {#if d.catchUp}<div class="text-xs opacity-70">Catches up missed runs</div>{/if}
-  {#if d.warning}<div class="text-xs text-warning-700-300">{d.warning}</div>{/if}
-  {#if d.onedit}<button type="button" class="btn btn-sm preset-tonal-surface nodrag nopan" onclick={d.onedit}>Edit schedule</button>{/if}
+  <div class="font-semibold">{d.summary}</div>
+  <div class="font-mono text-xs opacity-80">
+    {d.cron} · {d.timezone}{d.nextRun ? ` · next ${formatWhen(d.nextRun)}` : ""} · {d.catchUp ? "catches up missed runs" : "no catch-up"}
+  </div>
+  {#if d.warning}
+    <div class="rounded-md bg-warning-100-900 px-2 py-1 text-xs text-warning-800-200">
+      {d.warning}.{#if d.onedit} Use Edit schedule to confirm.{/if}
+    </div>
+  {/if}
+  {#if d.onedit}<button type="button" class="btn btn-sm preset-filled-surface-50-950 nodrag nopan" onclick={d.onedit}>Edit schedule</button>{/if}
   <Handle type="source" position={Position.Bottom} />
 </div>

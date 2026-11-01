@@ -56,6 +56,12 @@ test("schedule warning for an unconfirmed enabled move", () => {
   expect(scheduleWarning(sched(), [step()])).toBeNull();
 });
 
+test("schedule node carries cron and time zone; all-asset steps get an 'all assets' chip", () => {
+  const { nodes } = build([step()], sched({ cron: "0 3 * * 0", timezone: "Europe/Madrid" }));
+  expect(nodes[0]!.data).toMatchObject({ cron: "0 3 * * 0", timezone: "Europe/Madrid" });
+  expect((nodes[1]!.data as { chips: string[] }).chips).toContain("all assets");
+});
+
 test("dropIndex rounds to the nearest gap and clamps", () => {
   expect(dropIndex(-500, 3)).toBe(0);
   expect(dropIndex(80, 3)).toBe(0);
