@@ -10,7 +10,7 @@ export type MapInput = {
   instances: Instance[];
   jobs: JobRecord[];
   lastResults: Record<string, { status: RunStatus; finishedAt: string | null } | null>;
-  active: Array<{ run: Run; percent: number | null; queued: boolean }>;
+  active: Array<{ run: Run; percent: number | null; queued: boolean; /** The step that is live now when known from the event stream; the run record may be older. */ step?: number | null }>;
 };
 export type Position = { x: number; y: number };
 export type Layout = Record<string, Position>;
@@ -38,7 +38,7 @@ function instanceData(i: Instance): InstanceNodeData {
 function edgeLabel(job: JobRecord, step: StepRecord, position: number, input: MapInput): Pick<LabelEdgeData, "label" | "style"> {
   const active = input.active.find((a) => a.run.settings.jobId === job.id);
   if (active && !active.queued) {
-    const current = active.run.steps.find((s) => s.status === "running")?.position ?? active.run.steps[0]?.position ?? 1;
+    const current = active.step ?? active.run.steps.find((s) => s.status === "running")?.position ?? active.run.steps[0]?.position ?? 1;
     if (current === position) return { label: `${job.name} · ${active.percent === null ? "running" : `${Math.round(active.percent)}%`}`, style: "running" };
   }
   if (active?.queued && position === 1) return { label: `${job.name} · waiting for lock`, style: "muted" };
@@ -96,7 +96,7 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
       }
       continue;
     }
-    const current = a.run.steps.find((s) => s.status === "running")?.position ?? a.run.steps[0]?.position ?? 1;
+    const current = a.step ?? a.run.steps.find((s) => s.status === "running")?.position ?? a.run.steps[0]?.position ?? 1;
     const step = job.steps[current - 1];
     if (!step) continue;
     const src = nodes.get(endpoint(step.sourceId, known));

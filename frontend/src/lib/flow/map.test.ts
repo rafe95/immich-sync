@@ -137,3 +137,18 @@ test("edges between the same pair of instances get separate lanes, across steps 
   }));
   expect(edges.map((e) => [e.id, e.data!.lane])).toEqual([["j1:1", 0], ["j1:2", 1], ["j1:3", 0], ["j2:1", 2]]);
 });
+
+test("a live step overrides the run record's running step, so the percentage lands on the right line", () => {
+  const j = job([step("a", "b"), step("a", "b")]);
+  const twoSteps = run({ steps: [
+    { position: 1, status: "running", summary: null, startedAt: null, finishedAt: null },
+    { position: 2, status: "pending", summary: null, startedAt: null, finishedAt: null },
+  ] });
+  const labels = (stepOverride?: number | null) =>
+    buildMap(input({ jobs: [j], active: [{ run: twoSteps, percent: 63, queued: false, step: stepOverride }] })).edges.map((e) => e.data!.label);
+  expect(labels()).toEqual(["Nightly · 63%", "Nightly · not scheduled"]);
+  expect(labels(2)).toEqual(["Nightly · not scheduled", "Nightly · 63%"]);
+  // a run record fetched during preflight (no step running yet) still shows the percentage on the live step
+  const preflight = run({ steps: twoSteps.steps.map((s) => ({ ...s, status: "pending" })) });
+  expect(buildMap(input({ jobs: [j], active: [{ run: preflight, percent: 20, queued: false, step: 1 }] })).edges.map((e) => e.data!.label)).toEqual(["Nightly · 20%", "Nightly · not scheduled"]);
+});

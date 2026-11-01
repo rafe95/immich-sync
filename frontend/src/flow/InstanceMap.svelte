@@ -10,7 +10,7 @@
   import MapJobPanel from "./MapJobPanel.svelte";
   import InstanceList from "../InstanceList.svelte";
   import { addInstanceNode, autoLayout, buildMap, loadLayout, mergeLayout, placeholderPosition, saveLayout, type Layout, type MapInput } from "../lib/flow/map.ts";
-  import { livePercents, withLivePercents } from "../lib/flow/live.ts";
+  import { livePercents, withLivePercents, type LivePercent } from "../lib/flow/live.ts";
   import { createLiveRuns } from "../lib/flow/liveRuns.svelte.ts";
 
   let { map, onopenrun, onopenjob, onchanged }: { map: MapInput; onopenrun?: (runId: string) => void; onopenjob?: (jobId: string) => void; onchanged: () => void } = $props();
@@ -40,14 +40,15 @@
   let moved = $state<Layout>({});
 
   $effect(() => {
-    const built = buildMap(withLivePercents(map, JSON.parse(percentsKey) as Record<string, number>));
+    const built = buildMap(withLivePercents(map, JSON.parse(percentsKey) as Record<string, LivePercent>));
     const auto = autoLayout(built.nodes, built.edges);
     const pos = mergeLayout(auto, { ...(saved ?? {}), ...moved });
     const placed: Node[] = built.nodes.map((n) => ({ ...n, position: pos[n.id] ?? n.position, data: { ...n.data, selected: n.id === selectedInstanceId } }));
     nodes = [...placed, { ...addInstanceNode(), position: placeholderPosition(placed.map((n) => n.position)), data: { onadd: startAdd } }];
     edges = built.edges.map((e) => {
       const jobId = e.data?.jobId;
-      return { ...e, data: { ...e.data!, onselect: jobId ? () => selectJob(jobId) : undefined }, selected: selectedJobId !== null && jobId === selectedJobId };
+      // zIndex lifts the line and its label above the instance cards, which sit close together on a small map.
+      return { ...e, zIndex: 1000, data: { ...e.data!, onselect: jobId ? () => selectJob(jobId) : undefined }, selected: selectedJobId !== null && jobId === selectedJobId };
     });
   });
 

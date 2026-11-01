@@ -26,14 +26,24 @@ describe("currentStepOf", () => {
 describe("livePercents", () => {
   const active = (...runs: Array<{ run: Run; queued?: boolean }>): MapInput["active"] => runs.map((r) => ({ run: r.run, percent: null, queued: r.queued ?? false }));
 
-  test("uses the latest progress for the running step", () => {
+  test("uses the latest progress and the step it belongs to", () => {
     const s = stateOf([progress(30, 100, 1), progress(62, 100, 1)]);
-    expect(livePercents(active({ run: run("r1") }), () => s)).toEqual({ r1: 62 });
+    expect(livePercents(active({ run: run("r1") }), () => s)).toEqual({ r1: { percent: 62, step: 1 } });
   });
 
   test("progress without a step belongs to the running step", () => {
     const s = stateOf([progress(1, 4)]);
-    expect(livePercents(active({ run: run("r1") }), () => s)).toEqual({ r1: 25 });
+    expect(livePercents(active({ run: run("r1") }), () => s)).toEqual({ r1: { percent: 25, step: 1 } });
+  });
+
+  test("a stale run record (no step running yet) does not hide progress that names its step", () => {
+    const stale = run("r1", [{ position: 1, status: "pending" }, { position: 2, status: "pending" }]);
+    expect(livePercents(active({ run: stale }), () => stateOf([progress(12, 19, 1)]))).toEqual({ r1: { percent: 63, step: 1 } });
+  });
+
+  test("progress that names a later step than the record's running step wins (the record is stale)", () => {
+    const r = run("r1", [{ position: 1, status: "running" }, { position: 2, status: "pending" }]);
+    expect(livePercents(active({ run: r }), () => stateOf([progress(1, 2, 2)]))).toEqual({ r1: { percent: 50, step: 2 } });
   });
 
   test("progress of a finished step does not leak onto the running one", () => {
@@ -42,11 +52,12 @@ describe("livePercents", () => {
     expect(livePercents(active({ run: r }), () => s)).toEqual({});
   });
 
-  test("skips queued runs, runs without a stream yet, unknown totals and runs with no running step", () => {
+  test("skips queued runs, runs without a stream yet, unknown totals, and progress with no known step", () => {
     const s = stateOf([progress(5, null, 1)]);
     expect(livePercents(active({ run: run("q"), queued: true }), () => s)).toEqual({});
     expect(livePercents(active({ run: run("r1") }), () => undefined)).toEqual({});
     expect(livePercents(active({ run: run("r1") }), () => s)).toEqual({});
+    // no step named and none running: cannot tell which line it belongs to
     expect(livePercents(active({ run: run("p", [{ position: 1, status: "pending" }]) }), () => stateOf([progress(1, 2)]))).toEqual({});
   });
 });
@@ -60,10 +71,10 @@ describe("withLivePercents", () => {
     ],
   });
 
-  test("overrides only the listed runs and leaves the input untouched", () => {
+  test("overrides percent and step only for the listed runs and leaves the input untouched", () => {
     const input = base();
-    const out = withLivePercents(input, { r1: 40 });
-    expect(out.active.map((a) => a.percent)).toEqual([40, 7]);
+    const out = withLivePercents(input, { r1: { percent: 40, step: 2 } });
+    expect(out.active.map((a) => [a.percent, a.step])).toEqual([[40, 2], [7, undefined]]);
     expect(input.active.map((a) => a.percent)).toEqual([null, 7]);
   });
 
