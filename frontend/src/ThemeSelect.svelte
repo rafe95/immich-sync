@@ -1,6 +1,9 @@
 <script lang="ts">
   import { applyPref, loadPref, savePref, THEME_LABEL, THEME_PREFS, type ThemePref } from "./lib/theme.ts";
 
+  import Segmented from "./ui/Segmented.svelte";
+
+  const THEME_OPTIONS = THEME_PREFS.map((p) => ({ value: p, label: THEME_LABEL[p] }));
   let pref = $state<ThemePref>(loadPref());
 
   // Several selectors can be on screen (header and Settings); keep them in step.
@@ -19,13 +22,4 @@
   }
 </script>
 
-<div class="flex items-center gap-1" role="group" aria-label="Colour theme">
-  {#each THEME_PREFS as p (p)}
-    <button
-      type="button"
-      class="btn btn-sm {pref === p ? 'preset-tonal-primary font-semibold' : 'hover:preset-tonal-surface'}"
-      aria-pressed={pref === p}
-      onclick={() => choose(p)}
-    >{THEME_LABEL[p]}</button>
-  {/each}
-</div>
+<Segmented options={THEME_OPTIONS} value={pref} ariaLabel="Colour theme" onchange={choose} />

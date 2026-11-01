@@ -1,5 +1,6 @@
 <script lang="ts">
   import Toggle from "./ui/Toggle.svelte";
+  import Segmented from "./ui/Segmented.svelte";
   import { ApiError } from "./lib/api.ts";
   import { relativeIn } from "./lib/jobCard.ts";
   import { api } from "./lib/session.svelte.ts";
@@ -7,6 +8,8 @@
     browserTimezone, buildScheduleBody, cronFromForm, defaultScheduleForm, describeCron, filterTimezones, formatWhen, formFromSchedule, hasMove, isValidTimezone,
     needsMoveConfirmation, timezoneList, validateScheduleForm, WEEKDAYS, type JobRecord, type ScheduleForm, type ScheduleRecord,
   } from "./lib/jobs.ts";
+
+  const PRESET_OPTIONS = [{ value: "hourly", label: "Hourly" }, { value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "custom", label: "Custom cron" }] as const;
 
   let { job, onsaved, onclose }: { job: JobRecord; onsaved: (schedule: ScheduleRecord | null) => void; onclose: () => void } = $props();
 
@@ -89,13 +92,7 @@
       <div class="space-y-5">
         <fieldset class="space-y-3">
           <legend class="label-text">Repeat</legend>
-          <div class="inline-flex max-w-full flex-wrap overflow-hidden rounded-container border border-surface-300-700">
-            {#each [["hourly", "Hourly"], ["daily", "Daily"], ["weekly", "Weekly"], ["custom", "Custom cron"]] as const as [value, label] (value)}
-              <label class="cursor-pointer px-4 py-2 text-sm has-checked:preset-filled-primary-500 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-primary-500">
-                <input class="sr-only" type="radio" name="preset" {value} bind:group={form.preset} />{label}
-              </label>
-            {/each}
-          </div>
+          <Segmented options={PRESET_OPTIONS} value={form.preset} name="preset" ariaLabel="Repeat" onchange={(v) => (form.preset = v)} />
           {#if form.preset === "hourly"}
             <label class="label max-w-xs"><span class="label-text">At minute</span><input class="input" type="number" min="0" max="59" bind:value={form.minute} /></label>
           {:else if form.preset === "daily" || form.preset === "weekly"}
