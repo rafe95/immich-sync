@@ -127,16 +127,16 @@
   }
 </script>
 
-<div class="space-y-6">
+<div class="space-y-4">
   <h1 class="h3">Users</h1>
 
-  <div aria-live="polite" class="max-w-3xl">
+  <div aria-live="polite" class="max-w-4xl">
     {#if notice}
-      <p class="text-sm {notice.kind === 'error' ? 'text-error-500' : 'text-success-500'}" role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</p>
+      <p class="rounded-lg px-3 py-2 text-sm {notice.kind === 'error' ? 'preset-tonal-error' : 'preset-tonal-success'}" role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</p>
     {/if}
   </div>
 
-  <section class="card preset-outlined-surface-200-800 max-w-3xl space-y-3 p-4" aria-labelledby="users-title">
+  <section class="card preset-outlined-surface-200-800 bg-surface-50-950 max-w-4xl space-y-3 rounded-2xl p-5" aria-labelledby="users-title">
     <h2 id="users-title" class="h5">Accounts</h2>
     {#if loadError}
       <p class="text-error-500" role="alert">Could not load users: {loadError}</p>
@@ -144,82 +144,113 @@
     {:else if !loaded}
       <p role="status">Loading…</p>
     {:else}
-      <ul class="divide-y divide-surface-200-800">
-        {#each users as u (u.id)}
-          {@const isSelf = u.id === session.user?.id}
-          <li class="space-y-2 py-3">
-            <div class="flex flex-wrap items-center gap-3">
-              <span class="font-medium">{u.username}</span>
-              {#if isSelf}<span class="text-xs opacity-70">(you)</span>{/if}
-              <span class="badge {u.role === 'admin' ? 'preset-tonal-primary' : 'preset-tonal-surface'}">{roleLabel(u.role)}</span>
-              {#if u.deletingAt}<span class="badge preset-tonal-warning" role="status">Deleting…</span>{/if}
-              <span class="text-sm opacity-70">Last login: {lastLoginText(u.lastLoginAt)}</span>
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <label class="flex items-center gap-2 text-sm">
-                <span>Role</span>
-                <select class="select w-28" value={u.role} disabled={busyId !== null || !!u.deletingAt} onchange={(e) => changeRole(u, e.currentTarget.value as UserRole)} aria-label="Role for {u.username}">
-                  {#each ROLES as r (r)}<option value={r}>{roleLabel(r)}</option>{/each}
-                </select>
-              </label>
-              <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId !== null || !!u.deletingAt}
-                onclick={() => { resetId = resetId === u.id ? null : u.id; resetPw = ""; resetProblem = null; closeDelete(); }}
-                aria-expanded={resetId === u.id}>Reset password</button>
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse text-left text-sm">
+          <thead>
+            <tr class="border-surface-200-800 border-b text-xs uppercase tracking-wide opacity-70">
+              <th scope="col" class="px-2 py-2 font-semibold">User</th>
+              <th scope="col" class="px-2 py-2 font-semibold">Role</th>
+              <th scope="col" class="px-2 py-2 font-semibold">Last login</th>
+              <th scope="col" class="px-2 py-2 font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each users as u (u.id)}
+              {@const isSelf = u.id === session.user?.id}
+              <tr class="border-surface-200-800 border-b align-middle last:border-b-0">
+                <th scope="row" class="px-2 py-3 font-medium">
+                  {u.username}
+                  {#if isSelf}<span class="text-xs font-normal opacity-70">(you)</span>{/if}
+                  {#if u.deletingAt}<span class="badge preset-tonal-warning ml-1" role="status">Deleting…</span>{/if}
+                </th>
+                <td class="px-2 py-3">
+                  <span class="badge {u.role === 'admin' ? 'preset-tonal-primary' : 'preset-tonal-surface'}">{roleLabel(u.role)}</span>
+                </td>
+                <td class="px-2 py-3 opacity-80">{lastLoginText(u.lastLoginAt)}</td>
+                <td class="px-2 py-3">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <label class="flex items-center gap-2">
+                      <span>Role</span>
+                      <select class="select w-28" value={u.role} disabled={busyId !== null || !!u.deletingAt} onchange={(e) => changeRole(u, e.currentTarget.value as UserRole)} aria-label="Role for {u.username}">
+                        {#each ROLES as r (r)}<option value={r}>{roleLabel(r)}</option>{/each}
+                      </select>
+                    </label>
+                    <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId !== null || !!u.deletingAt}
+                      onclick={() => { resetId = resetId === u.id ? null : u.id; resetPw = ""; resetProblem = null; closeDelete(); }}
+                      aria-expanded={resetId === u.id}>Reset password</button>
+                    {#if confirmDeleteId !== u.id}
+                      <button class="btn btn-sm preset-tonal-error" type="button" disabled={busyId !== null} onclick={() => previewDelete(u)}>{u.deletingAt ? "Retry delete" : "Delete"}</button>
+                    {/if}
+                  </div>
+                </td>
+              </tr>
               {#if confirmDeleteId === u.id}
-                {#if deleteCounts}
-                  <p class="w-full text-sm" role="status">{deletionWarning(u.username, deleteCounts)}</p>
-                {:else if deleteError}
-                  <p class="w-full text-sm text-error-500" role="alert">Could not load deletion counts: {deleteError}</p>
-                  <button class="btn btn-sm preset-tonal-surface" type="button" onclick={() => previewDelete(u)}>Retry preview</button>
-                {:else}
-                  <p class="w-full text-sm" role="status">Loading deletion counts…</p>
-                {/if}
-                <button class="btn btn-sm preset-filled-error-500" type="button" disabled={busyId !== null || !deleteCounts} onclick={() => remove(u)}>Confirm delete</button>
-                <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId !== null} onclick={closeDelete}>Cancel</button>
-              {:else}
-                <button class="btn btn-sm preset-tonal-error" type="button" disabled={busyId !== null} onclick={() => previewDelete(u)}>{u.deletingAt ? "Retry delete" : "Delete"}</button>
+                <tr class="border-surface-200-800 border-b">
+                  <td colspan="4" class="px-2 pb-3">
+                    <div class="preset-tonal-error space-y-2 rounded-xl p-3">
+                      {#if deleteCounts}
+                        <p class="text-sm" role="status">{deletionWarning(u.username, deleteCounts)}</p>
+                      {:else if deleteError}
+                        <p class="text-sm" role="alert">Could not load deletion counts: {deleteError}</p>
+                        <button class="btn btn-sm preset-tonal-surface" type="button" onclick={() => previewDelete(u)}>Retry preview</button>
+                      {:else}
+                        <p class="text-sm" role="status">Loading deletion counts…</p>
+                      {/if}
+                      <div class="flex flex-wrap gap-2">
+                        <button class="btn btn-sm preset-filled-error-500" type="button" disabled={busyId !== null || !deleteCounts} onclick={() => remove(u)}>Confirm delete</button>
+                        <button class="btn btn-sm preset-tonal-surface" type="button" disabled={busyId !== null} onclick={closeDelete}>Cancel</button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
               {/if}
-            </div>
-            {#if resetId === u.id}
-              <form class="flex flex-wrap items-end gap-2" onsubmit={(e) => resetPassword(e, u)} novalidate>
-                <label class="label">
-                  <span class="label-text">New password for {u.username}</span>
-                  <input class="input" type="password" autocomplete="new-password" required aria-describedby="reset-hint-{u.id}" bind:value={resetPw} />
-                </label>
-                <button class="btn preset-filled-primary-500" type="submit" disabled={busyId === u.id}>Set password</button>
-                <span id="reset-hint-{u.id}" class="w-full text-xs {resetProblem ? 'text-error-500' : 'opacity-70'}" role={resetProblem ? "alert" : undefined}>{resetProblem ?? `At least ${MIN_PASSWORD_LENGTH} characters.`}</span>
-              </form>
-            {/if}
-          </li>
-        {/each}
-      </ul>
+              {#if resetId === u.id}
+                <tr class="border-surface-200-800 border-b">
+                  <td colspan="4" class="px-2 pb-3">
+                    <form class="preset-tonal-surface flex flex-wrap items-end gap-2 rounded-xl p-3" onsubmit={(e) => resetPassword(e, u)} novalidate>
+                      <label class="label">
+                        <span class="label-text">New password for {u.username}</span>
+                        <input class="input" type="password" autocomplete="new-password" required aria-describedby="reset-hint-{u.id}" bind:value={resetPw} />
+                      </label>
+                      <button class="btn preset-filled-primary-500 font-semibold" type="submit" disabled={busyId === u.id}>Set password</button>
+                      <span id="reset-hint-{u.id}" class="w-full text-xs {resetProblem ? 'text-error-500' : 'opacity-70'}" role={resetProblem ? "alert" : undefined}>{resetProblem ?? `At least ${MIN_PASSWORD_LENGTH} characters.`}</span>
+                    </form>
+                  </td>
+                </tr>
+              {/if}
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
   </section>
 
-  <section class="card preset-outlined-surface-200-800 max-w-3xl space-y-3 p-4" aria-labelledby="add-title">
+  <section class="card preset-outlined-surface-200-800 bg-surface-50-950 max-w-4xl space-y-3 rounded-2xl p-5" aria-labelledby="add-title">
     <h2 id="add-title" class="h5">Add user</h2>
     <form class="space-y-3" onsubmit={addUser} novalidate>
-      <label class="label">
-        <span class="label-text">Username</span>
-        <input class="input" type="text" autocomplete="off" required bind:value={add.username} />
-      </label>
-      <label class="label">
-        <span class="label-text">Password</span>
-        <input class="input" type="password" autocomplete="new-password" required aria-describedby="add-pw-hint" bind:value={add.password} />
-        <span id="add-pw-hint" class="text-xs opacity-70">At least {MIN_PASSWORD_LENGTH} characters.</span>
-      </label>
-      <label class="label">
-        <span class="label-text">Role</span>
-        <select class="select w-40" bind:value={add.role}>
-          {#each ROLES as r (r)}<option value={r}>{roleLabel(r)}</option>{/each}
-        </select>
-      </label>
+      <div class="flex flex-wrap items-start gap-3">
+        <label class="label min-w-48 flex-1">
+          <span class="label-text font-semibold">Username</span>
+          <input class="input" type="text" autocomplete="off" required bind:value={add.username} />
+        </label>
+        <label class="label min-w-48 flex-1">
+          <span class="label-text font-semibold">Password</span>
+          <input class="input" type="password" autocomplete="new-password" required aria-describedby="add-pw-hint" bind:value={add.password} />
+          <span id="add-pw-hint" class="text-xs opacity-70">At least {MIN_PASSWORD_LENGTH} characters.</span>
+        </label>
+        <label class="label">
+          <span class="label-text font-semibold">Role</span>
+          <select class="select w-40" bind:value={add.role}>
+            {#each ROLES as r (r)}<option value={r}>{roleLabel(r)}</option>{/each}
+          </select>
+        </label>
+      </div>
       {#if addProblems.length}
-        <ul class="list-disc pl-5 text-sm text-error-500" role="alert">
+        <ul class="preset-tonal-error list-disc rounded-lg py-2 pr-3 pl-7 text-sm" role="alert">
           {#each addProblems as p (p)}<li>{p}</li>{/each}
         </ul>
       {/if}
-      <button class="btn preset-filled-primary-500" type="submit" disabled={addBusy}>{addBusy ? "Adding…" : "Add user"}</button>
+      <button class="btn preset-filled-primary-500 font-semibold" type="submit" disabled={addBusy}>{addBusy ? "Adding…" : "Add user"}</button>
     </form>
   </section>
 </div>
