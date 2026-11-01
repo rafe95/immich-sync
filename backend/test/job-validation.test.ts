@@ -22,7 +22,7 @@ describe("job validation", () => {
     expect(out.name).toBe("Nightly");
     expect(out.steps![0]).toEqual({
       operation: "copy", sourceId: A, targetId: B, onFailure: "continue", onError: "stop",
-      options: { range: null, kind: "all", metadata: true, includeAlbums: false, createMissingAlbums: false, includeTags: false, dryRun: false },
+      options: { range: null, kind: "all", metadata: true, includeAlbums: false, createMissingAlbums: false, includeTags: false, includeEdits: false, dryRun: false },
     });
   });
 
@@ -63,6 +63,9 @@ describe("job validation", () => {
     expect(validateJobInput(job([step({ options: { includeAlbums: true, createMissingAlbums: true, includeTags: true } })])).steps![0]!.options)
       .toMatchObject({ includeAlbums: true, createMissingAlbums: true, includeTags: true });
     expect(problemsOf(opt({ metadata: false, includeTags: true })).join()).toContain("metadata");
+    expect(validateJobInput(job([step({ options: { includeEdits: true } })])).steps![0]!.options).toMatchObject({ includeEdits: true });
+    expect(problemsOf(opt({ metadata: false, includeEdits: true })).join()).toContain("includeEdits");
+    expect(problemsOf(opt({ includeEdits: "yes" })).join()).toContain("includeEdits must be a boolean");
     expect(problemsOf(opt({ createMissingAlbums: true })).join()).toContain("requires includeAlbums");
     expect(problemsOf(opt({ includeAlbums: "yes" })).join()).toContain("includeAlbums must be a boolean");
   });

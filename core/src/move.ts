@@ -21,6 +21,8 @@ export type MoveOptions = Omit<TransferPlanOptions, "operation"> & {
   createMissingAlbums?: boolean;
   /** Passed to metadata sync; additive tags matched by exact value. */
   includeTags?: boolean;
+  /** Passed to metadata sync; copies crop/rotate/mirror edits to a target asset without edits. */
+  includeEdits?: boolean;
   /**
    * Called with the verified copies after upload and before metadata sync (only when metadataSync is
    * true). Returns source asset ID -> reason for every asset whose target is not ready; those assets
@@ -186,6 +188,7 @@ export async function moveAssets(options: MoveOptions): Promise<TransferPlan | M
           ...(options.includeAlbums ? { includeAlbums: true } : {}),
           ...(options.createMissingAlbums ? { createMissingAlbums: true } : {}),
           ...(options.includeTags ? { includeTags: true } : {}),
+          ...(options.includeEdits ? { includeEdits: true } : {}),
           ...(signal ? { signal } : {}),
         });
         for (const asset of metadata.assets) metadataById.set(asset.id, asset);

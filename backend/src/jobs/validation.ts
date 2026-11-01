@@ -21,6 +21,7 @@ export type StepOptions = {
   includeAlbums?: boolean;
   createMissingAlbums?: boolean;
   includeTags?: boolean;
+  includeEdits?: boolean;
   /** Also consider assets in the source's trash (copy and sync_metadata only). */
   includeTrashed?: boolean;
   dryRun: boolean;
@@ -38,7 +39,7 @@ export type StepInput = {
 export type JobInput = { name: string; steps: StepInput[] };
 
 export const MAX_STEPS = 50;
-const OPTION_KEYS = new Set(["range", "kind", "metadata", "includeAlbums", "createMissingAlbums", "includeTags", "includeTrashed", "dryRun"]);
+const OPTION_KEYS = new Set(["range", "kind", "metadata", "includeAlbums", "createMissingAlbums", "includeTags", "includeEdits", "includeTrashed", "dryRun"]);
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -51,7 +52,7 @@ function parseDate(value: unknown, label: string, problems: string[]): string | 
 }
 
 export function normalizeOptions(raw: unknown, operation: Operation, label: string, problems: string[]): StepOptions {
-  const out: StepOptions = { range: null, kind: "all", metadata: true, includeAlbums: false, createMissingAlbums: false, includeTags: false, dryRun: false };
+  const out: StepOptions = { range: null, kind: "all", metadata: true, includeAlbums: false, createMissingAlbums: false, includeTags: false, includeEdits: false, dryRun: false };
   if (raw === undefined || raw === null) return out;
   if (!isObject(raw)) {
     problems.push(`${label}: options must be an object.`);
@@ -91,13 +92,13 @@ export function normalizeOptions(raw: unknown, operation: Operation, label: stri
     else if (operation === "sync_metadata" && !raw.metadata) problems.push(`${label}: metadata cannot be turned off for a sync_metadata step.`);
     else out.metadata = raw.metadata;
   }
-  for (const key of ["includeAlbums", "createMissingAlbums", "includeTags"] as const) {
+  for (const key of ["includeAlbums", "createMissingAlbums", "includeTags", "includeEdits"] as const) {
     if (raw[key] === undefined) continue;
     if (typeof raw[key] !== "boolean") problems.push(`${label}: ${key} must be a boolean.`);
     else out[key] = raw[key];
   }
-  if ((out.includeAlbums || out.createMissingAlbums || out.includeTags) && !out.metadata) {
-    problems.push(`${label}: includeAlbums, createMissingAlbums and includeTags need metadata sync to be enabled.`);
+  if ((out.includeAlbums || out.createMissingAlbums || out.includeTags || out.includeEdits) && !out.metadata) {
+    problems.push(`${label}: includeAlbums, createMissingAlbums, includeTags and includeEdits need metadata sync to be enabled.`);
   }
   if (raw.includeTrashed !== undefined) {
     if (typeof raw.includeTrashed !== "boolean") problems.push(`${label}: includeTrashed must be a boolean.`);

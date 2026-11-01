@@ -37,6 +37,7 @@ function chips(s: StepForm): string[] {
   if (s.operation !== "sync_metadata") out.push(s.metadata ? "metadata on" : "metadata off");
   if (s.includeAlbums) out.push("albums");
   if (s.includeTags) out.push("tags");
+  if (s.includeEdits) out.push("edits");
   if (s.includeTrashed) out.push("source trash");
   return out;
 }

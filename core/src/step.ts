@@ -126,6 +126,8 @@ export type StepOptions = {
   includeAlbums?: boolean;
   createMissingAlbums?: boolean;
   includeTags?: boolean;
+  /** Copy the source's crop/rotate/mirror edits to a target asset that has none (needs metadata sync). */
+  includeEdits?: boolean;
   dryRun?: boolean;
   signal?: AbortSignal;
   /**
@@ -299,13 +301,14 @@ function fromFields(result: MetadataFieldAssetResult): StepMetadata {
   }
 }
 
-type MetaFlags = Pick<StepOptions, "includeAlbums" | "createMissingAlbums" | "includeTags">;
+type MetaFlags = Pick<StepOptions, "includeAlbums" | "createMissingAlbums" | "includeTags" | "includeEdits">;
 
 function metaFlags(options: StepOptions): MetaFlags {
   return {
     ...(options.includeAlbums ? { includeAlbums: true } : {}),
     ...(options.createMissingAlbums ? { createMissingAlbums: true } : {}),
     ...(options.includeTags ? { includeTags: true } : {}),
+    ...(options.includeEdits ? { includeEdits: true } : {}),
   };
 }
 
@@ -620,7 +623,7 @@ function validate(options: StepOptions): void {
   if (options.operation !== "copy" && options.operation !== "move" && options.operation !== "sync_metadata") {
     throw new TransferPlanError("Operation must be copy, move or sync_metadata.");
   }
-  for (const name of ["metadata", "dryRun", "includeAlbums", "createMissingAlbums", "includeTags", "includeTrashed"] as const) {
+  for (const name of ["metadata", "dryRun", "includeAlbums", "createMissingAlbums", "includeTags", "includeEdits", "includeTrashed"] as const) {
     if (options[name] !== undefined && typeof options[name] !== "boolean") {
       throw new TransferPlanError(`${name} must be a boolean.`);
     }
@@ -632,8 +635,8 @@ function validate(options: StepOptions): void {
     throw new TransferPlanError("sync_metadata always synchronizes metadata; metadata cannot be disabled.");
   }
   const usesMetadata = options.operation === "sync_metadata" || options.metadata === true;
-  if (!usesMetadata && (options.includeAlbums || options.createMissingAlbums || options.includeTags)) {
-    throw new TransferPlanError("Album and tag options require metadata sync to be enabled.");
+  if (!usesMetadata && (options.includeAlbums || options.createMissingAlbums || options.includeTags || options.includeEdits)) {
+    throw new TransferPlanError("Album, tag and edit options require metadata sync to be enabled.");
   }
 }
 

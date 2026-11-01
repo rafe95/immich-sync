@@ -229,10 +229,10 @@ describe("core-backed executor", () => {
     const outcome = await ex.runStep({
       runId: "r", signal: new AbortController().signal, log: async (e) => void logged.push(e), position: 1, dryRun: true,
       step: { position: 1, operation: "copy", source: { id: a.id, alias: "a" }, target: { id: b.id, alias: "b" }, onFailure: "continue", onError: "stop",
-        options: { range: { lastDays: 1 }, kind: "photos", metadata: true, includeAlbums: true, includeTags: true, dryRun: true } },
+        options: { range: { lastDays: 1 }, kind: "photos", metadata: true, includeAlbums: true, includeTags: true, includeEdits: true, dryRun: true } },
     });
     expect(outcome.status).toBe("completed_with_failures");
-    expect(seen).toMatchObject({ operation: "copy", kind: "photos", metadata: true, includeAlbums: true, includeTags: true, createMissingAlbums: false, dryRun: true });
+    expect(seen).toMatchObject({ operation: "copy", kind: "photos", metadata: true, includeAlbums: true, includeTags: true, includeEdits: true, createMissingAlbums: false, dryRun: true });
     expect(seen.range.from).toBeString();
     expect(logged[0]).toMatchObject({ level: "debug" });
     expect(JSON.stringify(logged)).not.toContain("KEY-AAAAAA");
