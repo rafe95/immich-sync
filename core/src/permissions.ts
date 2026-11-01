@@ -61,6 +61,7 @@ export type MetadataSyncFlags = {
   includeAlbums?: boolean;
   createMissingAlbums?: boolean;
   includeTags?: boolean;
+  includeEdits?: boolean;
 };
 
 /**
@@ -75,6 +76,7 @@ export function metadataSyncPermissions(side: "source" | "target", flags: Metada
     if (side === "target") required.push("albumAsset.create", ...(flags.createMissingAlbums ? ["album.create"] : []));
   }
   if (flags.includeTags && side === "target") required.push("tag.read", "tag.create", "tag.asset");
+  if (flags.includeEdits) required.push("asset.edit.get", ...(side === "target" ? ["asset.edit.create"] : []));
   return required;
 }
 

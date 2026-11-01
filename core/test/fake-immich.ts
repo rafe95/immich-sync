@@ -34,6 +34,12 @@ export type FakeImmichOptions = {
   tagAssignFailures?: string[];
   /** Assign calls report success but do not attach the tags. */
   tagAssignNoOp?: boolean;
+  /** Edit reads (GET /api/assets/:id/edits) answer 500 for these asset ids. */
+  editGetFailures?: string[];
+  /** Edit writes (PUT /api/assets/:id/edits) answer 500 for these asset ids. */
+  editFailures?: string[];
+  /** Edit writes are accepted but ignored (to test verification). */
+  ignoreEdits?: boolean;
   /** Date updates are accepted but ignored (to test verification). */
   ignoreDateUpdates?: boolean;
   originals?: Record<string, Uint8Array>;
@@ -63,7 +69,10 @@ export type FakeAlbum = {
 
 export type FakeTag = { id: string; name: string; value: string };
 
+export type FakeEdit = { action: "crop" | "rotate" | "mirror"; parameters: Record<string, unknown> };
+
 export type FakeAsset = {
+  edits?: FakeEdit[];
   tags?: FakeTag[];
   id: string;
   checksum: string;
@@ -466,6 +475,30 @@ export function startFakeImmich(options: FakeImmichOptions = {}) {
           isFavorite: asset.isFavorite ?? false,
           duration: asset.duration ?? null,
         });
+      }
+
+      const editsMatch = path.match(/^\/api\/assets\/([^/]+)\/edits$/);
+      if (editsMatch && (req.method === "GET" || req.method === "PUT")) {
+        const id = decodeURIComponent(editsMatch[1] ?? "");
+        const need = req.method === "GET" ? "asset.edit.get" : "asset.edit.create";
+        if (!permissions.includes("all") && !permissions.includes(need)) {
+          return json({ message: `Missing ${need} permission`, statusCode: 403 }, 403);
+        }
+        const asset = assets.find((candidate) => candidate.id === id);
+        if (!asset) return json({ message: "Asset not found", statusCode: 404 }, 404);
+        const editsResponse = () => ({
+          assetId: id,
+          edits: (asset.edits ?? []).map((edit, index) => ({ id: `${id}-edit-${index}`, ...edit })),
+        });
+        if (req.method === "GET") {
+          if (options.editGetFailures?.includes(id)) return json({ message: "Edit lookup failed", statusCode: 500 }, 500);
+          return json(editsResponse());
+        }
+        body = await req.json();
+        requestRecord.body = body;
+        if (options.editFailures?.includes(id)) return json({ message: "Edit failed", statusCode: 500 }, 500);
+        if (!options.ignoreEdits) asset.edits = (body as { edits: FakeEdit[] }).edits;
+        return json(editsResponse());
       }
 
       const originalMatch = path.match(/^\/api\/assets\/([^/]+)\/original$/);
