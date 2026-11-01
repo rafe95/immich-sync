@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import Console from "./Console.svelte";
   import RunDiagram from "./flow/RunDiagram.svelte";
+  import RunStepDetail from "./flow/RunStepDetail.svelte";
   import { createRunEvents, type RunEvents } from "./lib/runEvents.svelte.ts";
   import { api } from "./lib/session.svelte.ts";
   import { formFromRun, isTerminal, logAsJson, logAsText, operationLabel, statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
@@ -108,22 +109,11 @@
   {:else if !run}
     <p role="status">Loading run…</p>
   {:else}
-    <div class="card preset-outlined-surface-200-800 space-y-2 p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="h5">{run.jobName}</h2>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <div class="flex flex-wrap items-center gap-3">
+        <h2 class="h4">{run.jobName}</h2>
         <span class="badge {statusClass(run.status)}" role="status" aria-live="polite">{statusLabel(run.status)}{run.dryRun ? " · dry run" : ""}</span>
       </div>
-      {#each run.settings.steps as s (s.position)}
-        <p class="text-sm">
-          Step {s.position}: {operationLabel(s.operation)} from <strong>{s.source.alias}</strong> to <strong>{s.target.alias}</strong>
-          · {s.options.range ? ("lastDays" in s.options.range ? `last ${s.options.range.lastDays} days` : `${"from" in s.options.range && s.options.range.from ? s.options.range.from : "beginning"} to ${"to" in s.options.range && s.options.range.to ? s.options.range.to : "now"}`) : "all dates"}
-          · {s.options.kind}{s.operation === "sync_metadata" ? "" : s.options.metadata ? " · with metadata" : " · without metadata"}{s.options.includeTrashed ? " · including source trash" : ""}
-          {#if s.options.dryRun}· <em>dry run: no changes on either server</em>{/if}
-        </p>
-      {/each}
-      <p class="text-xs opacity-70">
-        Created {fmt(run.createdAt)} · started {fmt(run.startedAt)} · finished {fmt(run.finishedAt)} · {run.trigger}
-      </p>
       <div class="flex flex-wrap gap-2">
         {#if !finished}
           <button type="button" class="btn preset-filled-error-500" onclick={cancel} disabled={cancelling}>{cancelling ? "Cancelling…" : "Cancel run"}</button>
@@ -134,33 +124,55 @@
         <button type="button" class="btn preset-tonal-surface" onclick={() => download("text")} disabled={downloading}>Download log (text)</button>
         <button type="button" class="btn preset-tonal-surface" onclick={() => download("json")} disabled={downloading}>Download log (JSON)</button>
       </div>
-      {#if notice}<p class="text-sm" role="status">{notice}</p>{/if}
     </div>
+    {#if notice}<p class="text-sm" role="status">{notice}</p>{/if}
+    <p class="text-xs opacity-70">
+      Created {fmt(run.createdAt)} · started {fmt(run.startedAt)} · finished {fmt(run.finishedAt)} · {run.trigger}
+    </p>
   {/if}
 
   {#if run && events && run.settings.steps.length}
     <RunDiagram {run} progress={events.state} bind:selected={stepFilter} />
   {/if}
 
-  {#if events}
-    <Console {events} {stepFilter} />
-  {/if}
-
-  {#if run && finished}
-    <div class="card preset-outlined-surface-200-800 space-y-2 p-4">
-      <h3 class="h6">Summary</h3>
-      {#each run.steps as st (st.position)}
-        <div>
-          <p class="text-sm font-semibold">Step {st.position}: {statusLabel(st.status)}</p>
-          {#if summaryEntries(st.summary).length}
-            <dl class="grid grid-cols-2 gap-x-4 text-sm sm:grid-cols-4">
-              {#each summaryEntries(st.summary) as [k, v] (k)}
-                <div class="flex justify-between gap-2"><dt class="opacity-70">{k}</dt><dd>{v}</dd></div>
-              {/each}
-            </dl>
-          {/if}
+  {#if run}
+    <div class="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
+      <div class="space-y-4">
+        {#if events && run.settings.steps.length}
+          <RunStepDetail progress={events.state} bind:selected={stepFilter} />
+        {/if}
+        <div class="card preset-outlined-surface-200-800 space-y-2 p-3">
+          <h3 class="h6">Settings</h3>
+          {#each run.settings.steps as s (s.position)}
+            <p class="text-sm">
+              Step {s.position}: {operationLabel(s.operation)} from <strong>{s.source.alias}</strong> to <strong>{s.target.alias}</strong>
+              · {s.options.range ? ("lastDays" in s.options.range ? `last ${s.options.range.lastDays} days` : `${"from" in s.options.range && s.options.range.from ? s.options.range.from : "beginning"} to ${"to" in s.options.range && s.options.range.to ? s.options.range.to : "now"}`) : "all dates"}
+              · {s.options.kind}{s.operation === "sync_metadata" ? "" : s.options.metadata ? " · with metadata" : " · without metadata"}{s.options.includeTrashed ? " · including source trash" : ""}
+              {#if s.options.dryRun}· <em>dry run: no changes on either server</em>{/if}
+            </p>
+          {/each}
         </div>
-      {/each}
+        {#if finished}
+          <div class="card preset-outlined-surface-200-800 space-y-2 p-3">
+            <h3 class="h6">Summary</h3>
+            {#each run.steps as st (st.position)}
+              <div>
+                <p class="text-sm font-semibold">Step {st.position}: {statusLabel(st.status)}</p>
+                {#if summaryEntries(st.summary).length}
+                  <dl class="grid grid-cols-1 gap-x-4 text-sm">
+                    {#each summaryEntries(st.summary) as [k, v] (k)}
+                      <div class="flex justify-between gap-2"><dt class="opacity-70">{k}</dt><dd>{v}</dd></div>
+                    {/each}
+                  </dl>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <div class="min-w-0">
+        {#if events}<Console {events} {stepFilter} />{/if}
+      </div>
     </div>
   {/if}
 </div>
