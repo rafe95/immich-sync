@@ -8,7 +8,6 @@
   import type { Instance } from "../lib/api.ts";
   import { MAX_STEPS, OP_LABEL, type ScheduleRecord, type StepForm } from "../lib/jobs.ts";
   import type { Operation } from "../lib/runs.ts";
-  import { opTone } from "../lib/flow/ops.ts";
   import { buildPipeline, STEP_GAP } from "../lib/flow/pipeline.ts";
 
   let {
@@ -34,8 +33,6 @@
   const nodeTypes = { instance: InstanceNode, step: StepNode, schedule: ScheduleNode, add: AddNode } as unknown as NodeTypes;
   const atMax = $derived(steps.length >= MAX_STEPS);
   const firstStepY = $derived(schedule ? STEP_GAP : 0);
-  const OPS = Object.keys(OP_LABEL) as Operation[];
-  const toneCls = { primary: "preset-tonal-primary", warning: "preset-tonal-warning", tertiary: "preset-tonal-tertiary" };
 
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
@@ -77,31 +74,15 @@
   }
 </script>
 
-<div class="grid gap-3 md:grid-cols-[10rem_1fr]">
-  <div class="space-y-2" aria-label="Step palette">
-    <p class="label-text">Add a step</p>
-    {#each OPS as op (op)}
-      <button
-        type="button"
-        class="btn w-full {toneCls[opTone(op)]}"
-        draggable="true"
-        disabled={atMax}
-        ondragstart={(e) => e.dataTransfer?.setData("application/x-immich-op", op)}
-        onclick={() => onadd(op, steps.length)}
-      >{OP_LABEL[op]}</button>
-    {/each}
-    <p class="text-xs opacity-70">Click to append, or drag onto the pipeline.</p>
-  </div>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="h-[32rem]" bind:this={box} ondragover={(e) => e.preventDefault()} ondrop={drop}>
-    <FlowCanvas
-      bind:nodes
-      bind:edges
-      {nodeTypes}
-      lockable
-      fitKey={steps.length}
-      onnodeclick={(n) => onselect(n.type === "step" ? n.id : null)}
-      onnodedragstop={dragStop}
-    />
-  </div>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="h-[32rem]" bind:this={box} ondragover={(e) => e.preventDefault()} ondrop={drop}>
+  <FlowCanvas
+    bind:nodes
+    bind:edges
+    {nodeTypes}
+    lockable
+    fitKey={steps.length}
+    onnodeclick={(n) => onselect(n.type === "step" ? n.id : null)}
+    onnodedragstop={dragStop}
+  />
 </div>

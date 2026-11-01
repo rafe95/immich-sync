@@ -152,6 +152,16 @@ export function buildJobBody(name: string, steps: StepForm[]): { ok: true; body:
   return { ok: true, body: { name: name.trim(), steps: steps.map(buildStepBody) } };
 }
 
+/**
+ * A stable string of what the form would save, for "has anything changed?". Client-only keys are left out. A form that
+ * cannot be saved yet is compared by its raw fields, so editing it still counts as a change.
+ */
+export function jobSnapshot(name: string, steps: StepForm[]): string {
+  const built = buildJobBody(name, steps);
+  if (built.ok) return JSON.stringify(built.body);
+  return JSON.stringify({ name, steps: steps.map(({ key: _key, ...rest }) => rest) });
+}
+
 /** Moves an item; returns a new array (the same one if the move is out of range). */
 export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
   if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return [...list];

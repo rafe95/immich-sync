@@ -1,11 +1,12 @@
 <script lang="ts">
   import { ApiError, type Instance } from "./lib/api.ts";
   import { api } from "./lib/session.svelte.ts";
-  import { buildJobBody, defaultStep, duplicateStep, MAX_STEPS, normalizeStepForm, stepFromRecord, type JobRecord, type StepForm } from "./lib/jobs.ts";
+  import { buildJobBody, defaultStep, duplicateStep, jobSnapshot, MAX_STEPS, normalizeStepForm, stepFromRecord, type JobRecord, type StepForm } from "./lib/jobs.ts";
   import type { Operation } from "./lib/runs.ts";
   import { reorderByY, scheduleWarning, stepProblems } from "./lib/flow/pipeline.ts";
   import JobPipeline from "./flow/JobPipeline.svelte";
   import StepPanel from "./flow/StepPanel.svelte";
+  import StepPalette from "./flow/StepPalette.svelte";
 
   let {
     job,
@@ -13,7 +14,16 @@
     onsaved,
     oncancel,
     oneditschedule,
-  }: { job: JobRecord | null; instances: Instance[]; onsaved: (job: JobRecord) => void; oncancel: () => void; oneditschedule?: () => void } = $props();
+    onstart,
+  }: {
+    job: JobRecord | null;
+    instances: Instance[];
+    onsaved: (job: JobRecord) => void;
+    oncancel: () => void;
+    oneditschedule?: () => void;
+    /** Dry run / Run now for the saved job; offered only for an existing job with no unsaved changes. */
+    onstart?: (job: JobRecord, dryRun: boolean) => void;
+  } = $props();
 
   // Mounted fresh per edit, so the initial value is what we want.
   // svelte-ignore state_referenced_locally
@@ -23,6 +33,9 @@
   let errors = $state<string[]>([]);
   let saving = $state(false);
   let announce = $state("");
+  // svelte-ignore state_referenced_locally
+  const initialSnapshot = jobSnapshot(name, steps);
+  const dirty = $derived(jobSnapshot(name, steps) !== initialSnapshot);
 
   // svelte-ignore state_referenced_locally
   let selectedKey = $state<string | null>(steps[0]?.key ?? null);
@@ -77,59 +90,72 @@
   }
 </script>
 
-<form class="card preset-outlined-surface-200-800 max-w-6xl space-y-4 p-4" onsubmit={save} aria-labelledby="job-form-title">
-  <h2 id="job-form-title" class="h5">{job ? `Edit "${job.name}"` : "New job"}</h2>
-
-  <label class="label max-w-md">
-    <span class="label-text">Name</span>
-    <input class="input" bind:value={name} maxlength="100" required autocomplete="off" />
-  </label>
+<form class="space-y-4" onsubmit={save} aria-label={job ? `Edit job ${job.name}` : "New job"}>
+  <div class="flex flex-wrap items-end justify-between gap-3">
+    <div class="min-w-0 flex-1 space-y-1">
+      <p class="text-sm opacity-70"><button type="button" class="anchor" onclick={oncancel}>Jobs</button> / {job ? "Edit" : "New"}</p>
+      <label class="sr-only" for="job-name">Job name</label>
+      <input id="job-name" class="input h3 w-full max-w-xl" placeholder="Job name" bind:value={name} maxlength="100" required autocomplete="off" />
+    </div>
+    <div class="flex flex-wrap gap-2">
+      {#if job && onstart}
+        <button type="button" class="btn preset-tonal-surface" disabled={dirty || saving} title={dirty ? "Save your changes first" : undefined} onclick={() => onstart(job, true)}>Dry run</button>
+        <button type="button" class="btn preset-tonal-primary" disabled={dirty || saving} title={dirty ? "Save your changes first" : undefined} onclick={() => onstart(job, false)}>Run now</button>
+      {/if}
+      <button class="btn preset-filled-primary-500" type="submit" disabled={saving}>{saving ? "Saving…" : job ? "Save job" : "Create job"}</button>
+      <button class="btn preset-tonal-surface" type="button" onclick={oncancel}>Cancel</button>
+    </div>
+  </div>
 
   <p class="sr-only" role="status" aria-live="polite">{announce}</p>
-
-  <JobPipeline
-    {steps}
-    schedule={job?.schedule ?? null}
-    {instances}
-    {selectedKey}
-    onselect={(k) => (selectedKey = k)}
-    onadd={addAt}
-    onreorder={reorder}
-    oneditschedule={job && oneditschedule ? oneditschedule : undefined}
-  />
-  {#if job && oneditschedule}<p class="text-xs opacity-70">Editing the schedule leaves this form; unsaved step changes are discarded.</p>{/if}
-
-  {#if selected}
-    <StepPanel
-      step={selected}
-      index={selectedIndex}
-      count={steps.length}
-      {instances}
-      problems={stepProblems(selected, selectedIndex, instances)}
-      canDuplicate={steps.length < MAX_STEPS}
-      onchange={(patch) => update(selectedIndex, patch)}
-      onduplicate={() => duplicate(selectedIndex)}
-      onremove={() => remove(selectedIndex)}
-    />
-  {:else}
-    <p class="text-sm opacity-70">Select a step to edit its settings.</p>
-  {/if}
-
-  <section class="card preset-tonal-surface space-y-1 p-3" aria-label="Checks">
-    <h3 class="font-semibold">Checks</h3>
-    {#if allProblems.length}
-      <ul class="list-disc pl-5 text-sm text-warning-700-300">{#each allProblems as p (p)}<li>{p}</li>{/each}</ul>
-    {:else}
-      <p class="text-sm">No problems found.</p>
-    {/if}
-  </section>
 
   {#if errors.length}
     <ul class="list-disc pl-5 text-sm text-error-500" role="alert">{#each errors as p (p)}<li>{p}</li>{/each}</ul>
   {/if}
 
-  <div class="flex flex-wrap gap-2">
-    <button class="btn preset-filled-primary-500" type="submit" disabled={saving}>{saving ? "Saving…" : job ? "Save job" : "Create job"}</button>
-    <button class="btn preset-tonal-surface" type="button" onclick={oncancel}>Cancel</button>
+  <div class="grid gap-4 lg:grid-cols-[12rem_minmax(0,1fr)_22rem]">
+    <div class="space-y-4">
+      <StepPalette disabled={steps.length >= MAX_STEPS} onadd={(op) => addAt(op, steps.length)} />
+      <section class="card preset-tonal-surface space-y-1 p-3" aria-label="Checks">
+        <h3 class="font-semibold">Checks</h3>
+        {#if allProblems.length}
+          <ul class="list-disc pl-5 text-sm text-warning-700-300">{#each allProblems as p (p)}<li>{p}</li>{/each}</ul>
+        {:else}
+          <p class="text-sm">No problems found.</p>
+        {/if}
+      </section>
+    </div>
+
+    <div class="min-w-0 space-y-2">
+      <JobPipeline
+        {steps}
+        schedule={job?.schedule ?? null}
+        {instances}
+        {selectedKey}
+        onselect={(k) => (selectedKey = k)}
+        onadd={addAt}
+        onreorder={reorder}
+        oneditschedule={job && oneditschedule ? oneditschedule : undefined}
+      />
+      {#if job && oneditschedule}<p class="text-xs opacity-70">Editing the schedule leaves this form; unsaved step changes are discarded.</p>{/if}
+    </div>
+
+    <div>
+      {#if selected}
+        <StepPanel
+          step={selected}
+          index={selectedIndex}
+          count={steps.length}
+          {instances}
+          problems={stepProblems(selected, selectedIndex, instances)}
+          canDuplicate={steps.length < MAX_STEPS}
+          onchange={(patch) => update(selectedIndex, patch)}
+          onduplicate={() => duplicate(selectedIndex)}
+          onremove={() => remove(selectedIndex)}
+        />
+      {:else}
+        <p class="text-sm opacity-70">Select a step to edit its settings.</p>
+      {/if}
+    </div>
   </div>
 </form>

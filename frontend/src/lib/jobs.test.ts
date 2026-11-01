@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   buildJobBody, buildScheduleBody, cronFromForm, defaultScheduleForm, defaultStep, describeCron, filterTimezones, formFromSchedule, moveItem, needsMoveConfirmation,
-  normalizeStepForm, scheduleSummary, stepFromRecord, stepSummary, validateJob, validateScheduleForm,
+  jobSnapshot, normalizeStepForm, scheduleSummary, stepFromRecord, stepSummary, validateJob, validateScheduleForm,
 } from "./jobs.ts";
 
 const A = "11111111-1111-4111-8111-111111111111";
@@ -86,4 +86,18 @@ test("timezone filter and schedule summary", () => {
   expect(filterTimezones(["Europe/Lisbon", "America/New_York"], "new york")).toEqual(["America/New_York"]);
   expect(scheduleSummary(null)).toBe("No schedule");
   expect(scheduleSummary({ cron: "30 0 * * *", timezone: "UTC", enabled: false } as any)).toBe("Every day at 00:30 (UTC) · paused");
+});
+
+test("jobSnapshot follows what would be saved, ignores client-only keys, and still tells invalid forms apart", () => {
+  const a = defaultStep({ sourceId: "s", targetId: "t" });
+  expect(jobSnapshot("J", [a])).toBe(jobSnapshot("J", [{ ...a, key: "another-client-key" }]));
+  expect(jobSnapshot("J", [a])).not.toBe(jobSnapshot("K", [a]));
+  expect(jobSnapshot("J", [a])).not.toBe(jobSnapshot("J", [{ ...a, kind: "photos" }]));
+  expect(jobSnapshot("J", [a])).not.toBe(jobSnapshot("J", [a, defaultStep({ sourceId: "t", targetId: "s" })]));
+
+  // No target yet: the form cannot be saved, but editing it must still count as a change.
+  const incomplete = defaultStep({ sourceId: "s", targetId: "" });
+  expect(jobSnapshot("J", [incomplete])).toBe(jobSnapshot("J", [{ ...incomplete, key: "x" }]));
+  expect(jobSnapshot("J", [incomplete])).not.toBe(jobSnapshot("J2", [incomplete]));
+  expect(jobSnapshot("J", [incomplete])).not.toBe(jobSnapshot("J", [{ ...incomplete, kind: "videos" }]));
 });
