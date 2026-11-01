@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Toggle from "./ui/Toggle.svelte";
   import { tick } from "svelte";
   import type { RunEvents } from "./lib/runEvents.svelte.ts";
   import { assetOf, eventText, formatBytes, lineVisible, stepSummaries, progressPercent, statusLabel, type EventLevel } from "./lib/runs.ts";
@@ -56,7 +57,7 @@
         <option value="error">errors only</option>
       </select>
     </label>
-    <label class="flex items-center gap-2 text-sm"><input class="checkbox" type="checkbox" bind:checked={showAssets} disabled={failuresOnly} /> Per-asset lines</label>
+    <Toggle bind:checked={showAssets} disabled={failuresOnly} label="Per-asset lines" />
     <button type="button" class="chip {failuresOnly ? 'preset-filled-error-500' : 'preset-tonal-surface'}" aria-pressed={failuresOnly} onclick={() => (failuresOnly = !failuresOnly)}>
       Only failures{cs.failures.length ? ` (${cs.failures.length}${cs.failuresDropped ? "+" : ""})` : ""}
     </button>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Toggle from "./ui/Toggle.svelte";
   import { ApiError, type Instance } from "./lib/api.ts";
   import { api } from "./lib/session.svelte.ts";
   import type { JobRecord } from "./lib/jobs.ts";
@@ -92,10 +93,7 @@
     <span class="label-text">Note (optional)</span>
     <input class="input" bind:value={form.note} autocomplete="off" />
   </label>
-  <label class="flex items-center gap-2">
-    <input class="checkbox" type="checkbox" bind:checked={form.isDefault} />
-    <span>Default instance</span>
-  </label>
+  <Toggle bind:checked={form.isDefault} label="Default instance" />
   {#if errors.length}
     <ul class="list-disc pl-5 text-sm text-error-500" role="alert">
       {#each errors as p (p)}<li>{p}</li>{/each}
