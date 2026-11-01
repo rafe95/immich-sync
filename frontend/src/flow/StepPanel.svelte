@@ -62,7 +62,7 @@
     {#if isMove}<p class="text-sm opacity-80">Move verifies each asset on the target, then sends the source asset to the source's trash. Nothing is permanently deleted.</p>{/if}
   </div>
 
-  <div class="grid gap-3 sm:grid-cols-2">
+  <div class="grid gap-3">
     <label class="label"><span class="label-text">Source</span>
       <select class="select" value={step.sourceId} onchange={(e) => onchange({ sourceId: e.currentTarget.value })}>
         <option value="" disabled>Choose…</option>
@@ -86,7 +86,7 @@
       </select>
     </label>
     {#if step.rangeMode === "window"}
-      <div class="grid gap-3 sm:grid-cols-2">
+      <div class="grid gap-3">
         <label class="label"><span class="label-text">From (optional)</span><input class="input" type="date" value={step.from} onchange={(e) => onchange({ from: e.currentTarget.value })} /></label>
         <label class="label"><span class="label-text">To (optional)</span><input class="input" type="date" value={step.to} onchange={(e) => onchange({ to: e.currentTarget.value })} /></label>
       </div>
@@ -118,7 +118,7 @@
     )}
   </div>
 
-  <div class="grid gap-3 sm:grid-cols-2">
+  <div class="grid gap-3">
     <label class="label"><span class="label-text">If some assets fail in this step</span>
       <select class="select" value={step.onFailure} onchange={(e) => onchange({ onFailure: e.currentTarget.value as StepForm["onFailure"] })}>
         <option value="continue">Continue with the next step</option>

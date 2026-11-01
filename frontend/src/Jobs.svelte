@@ -109,12 +109,12 @@
 </script>
 
 <div class="space-y-4">
-  <h1 class="h3">Jobs</h1>
+  {#if mode.kind !== "edit"}<h1 class="h3">Jobs</h1>{/if}
 
   {#if notice}<p class="text-sm" role="status">{notice}</p>{/if}
 
   {#if mode.kind === "edit"}
-    <JobEditor job={mode.job} {instances} onsaved={saved} oncancel={() => (mode = { kind: "list" })} oneditschedule={editSchedule} />
+    <JobEditor job={mode.job} {instances} onsaved={saved} oncancel={() => (mode = { kind: "list" })} oneditschedule={editSchedule} onstart={(j, dry) => (dry ? void start(j, true) : runNow(j))} />
   {:else if mode.kind === "schedule" && editingSchedule}
     <ScheduleEditor job={editingSchedule} onsaved={(s) => scheduleSaved(editingSchedule.id, s)} onclose={() => { mode = { kind: "list" }; void load(); }} />
   {:else if loading}
