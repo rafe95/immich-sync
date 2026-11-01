@@ -22,4 +22,4 @@
   }
 </script>
 
-<Segmented options={THEME_OPTIONS} value={pref} ariaLabel="Colour theme" onchange={choose} />
+<Segmented compact options={THEME_OPTIONS} value={pref} ariaLabel="Colour theme" onchange={choose} />

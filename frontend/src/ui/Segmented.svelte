@@ -9,6 +9,7 @@
     ariaLabel,
     name,
     disabled = false,
+    compact = false,
   }: {
     options: ReadonlyArray<{ value: T; label: string; disabled?: boolean }>;
     value: T;
@@ -16,14 +17,16 @@
     ariaLabel: string;
     name?: string;
     disabled?: boolean;
+    /** Smaller items, for toolbars and the header. */
+    compact?: boolean;
   } = $props();
 </script>
 
-<SegmentedControl {value} {name} {disabled} aria-label={ariaLabel} onValueChange={(e) => e.value && e.value !== value && onchange(e.value as T)}>
+<SegmentedControl class="w-fit" {value} {name} {disabled} aria-label={ariaLabel} onValueChange={(e) => e.value && e.value !== value && onchange(e.value as T)}>
   <SegmentedControl.Control>
     <SegmentedControl.Indicator />
     {#each options as o (o.value)}
-      <SegmentedControl.Item value={o.value} disabled={o.disabled}>
+      <SegmentedControl.Item class={compact ? "px-3! py-1! text-sm" : ""} value={o.value} disabled={o.disabled}>
         <SegmentedControl.ItemText>{o.label}</SegmentedControl.ItemText>
         <SegmentedControl.ItemHiddenInput />
       </SegmentedControl.Item>

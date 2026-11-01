@@ -27,7 +27,7 @@
   } = $props();
 </script>
 
-<Switch {checked} {disabled} {name} {required} onCheckedChange={(e) => { checked = e.checked; onchange?.(e.checked); }}>
+<Switch class="w-full" {checked} {disabled} {name} {required} onCheckedChange={(e) => { checked = e.checked; onchange?.(e.checked); }}>
   <Switch.Control><Switch.Thumb /></Switch.Control>
   <Switch.Label>
     {#if children}{@render children()}{:else}{label}{/if}{#if hint}<span class="block text-sm opacity-70">{hint}</span>{/if}

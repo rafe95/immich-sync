@@ -146,7 +146,7 @@
     <h2 class="mr-1 text-base font-semibold">Instances</h2>
     <button type="button" class="btn btn-sm preset-filled-primary-500" onclick={startAdd}>+ Add instance</button>
     <button type="button" class="btn btn-sm preset-outlined-surface-300-700" disabled={checkingAll || map.instances.length === 0} onclick={checkAll}>{checkingAll ? "Checking…" : "Check all"}</button>
-    <Segmented options={VIEW_OPTIONS} value={mode} ariaLabel="View" onchange={(v) => (mode = v)} />
+    <Segmented compact options={VIEW_OPTIONS} value={mode} ariaLabel="View" onchange={(v) => (mode = v)} />
     {#if notice}<p class="text-sm" role="status">{notice}</p>{/if}
   </div>
 
