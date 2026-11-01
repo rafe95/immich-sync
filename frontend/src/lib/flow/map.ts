@@ -60,6 +60,7 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
   for (const i of input.instances) nodes.set(i.id, { id: i.id, type: "instance", position: { x: 0, y: 0 }, data: instanceData(i) });
 
   const edges: Edge<LabelEdgeData>[] = [];
+  const lanes = new Map<string, number>();
   for (const job of input.jobs) {
     job.steps.forEach((step, idx) => {
       const position = idx + 1;
@@ -75,7 +76,10 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
         }
       }
       const { label, style } = edgeLabel(job, step, position, input);
-      edges.push({ id: `${job.id}:${position}`, type: "label", source, target, data: { label, tone: opTone(step.operation), style, jobId: job.id } as LabelEdgeData });
+      const pair = `${source}>${target}`;
+      const lane = lanes.get(pair) ?? 0;
+      lanes.set(pair, lane + 1);
+      edges.push({ id: `${job.id}:${position}`, type: "label", source, target, data: { label, tone: opTone(step.operation), style, jobId: job.id, lane } as LabelEdgeData });
     });
   }
 
@@ -106,8 +110,12 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
 
 export const ADD_INSTANCE_NODE_ID = "add-instance";
 
-/** The dashed "Add instance" box. It joins the automatic layout (as the last loner) but is never dragged or saved. */
+/** The dashed "Add instance" box. It is never dragged or saved; see `placeholderPosition`. */
 export const addInstanceNode = (): Node => ({ id: ADD_INSTANCE_NODE_ID, type: "add", position: { x: 0, y: 0 }, draggable: false, selectable: false, data: {} });
+
+/** Below the lowest node and in line with the left-most one, wherever the user has moved the others. */
+export const placeholderPosition = (positions: readonly Position[]): Position =>
+  positions.length ? { x: Math.min(...positions.map((p) => p.x)), y: Math.max(...positions.map((p) => p.y)) + ROW_GAP } : { x: 0, y: 0 };
 
 /** Columns: only-source 0, both 1, only-target 2, unconnected 0 below the rest. */
 export function autoLayout(nodes: Node[], edges: Edge[]): Layout {

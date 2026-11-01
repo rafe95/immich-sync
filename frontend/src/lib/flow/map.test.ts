@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { Instance } from "../api.ts";
 import type { JobRecord, ScheduleRecord, StepRecord } from "../jobs.ts";
 import type { Run } from "../runs.ts";
-import { ADD_INSTANCE_NODE_ID, addInstanceNode, autoLayout, buildMap, COLUMN_GAP, formatWhen, loadLayout, mergeLayout, ROW_GAP, saveLayout, type MapInput } from "./map.ts";
+import { ADD_INSTANCE_NODE_ID, addInstanceNode, autoLayout, buildMap, COLUMN_GAP, formatWhen, loadLayout, mergeLayout, placeholderPosition, ROW_GAP, saveLayout, type MapInput } from "./map.ts";
 
 const inst = (id: string, over: Partial<Instance> = {}): Instance => ({
   id, alias: id, apiUrl: `http://${id}/api`, note: null, isDefault: false, lastCheck: null, lastCheckedAt: null, createdAt: "", updatedAt: "", ...over,
@@ -125,16 +125,15 @@ test("the add-instance placeholder is a fixed 'add' node", () => {
   expect(buildMap(input()).nodes.map((x) => x.id)).not.toContain(ADD_INSTANCE_NODE_ID);
 });
 
-test("autoLayout puts the placeholder in the first column under the other loners and sources", () => {
-  const { nodes, edges } = buildMap(input({ instances: [inst("a"), inst("b"), inst("c")], jobs: [job([step("a", "b")])] }));
-  const pos = autoLayout([...nodes, addInstanceNode()], edges);
-  // a is a source (column 0, row 0), b a target (column 2), c has no job (loner, row 1), the placeholder follows c.
-  expect(pos["a"]).toEqual({ x: 0, y: 0 });
-  expect(pos["b"]).toEqual({ x: 2 * COLUMN_GAP, y: 0 });
-  expect(pos["c"]).toEqual({ x: 0, y: ROW_GAP });
-  expect(pos[ADD_INSTANCE_NODE_ID]).toEqual({ x: 0, y: 2 * ROW_GAP });
+test("the placeholder goes below the lowest node, at the left-most x, so it never overlaps a moved node", () => {
+  expect(placeholderPosition([])).toEqual({ x: 0, y: 0 });
+  expect(placeholderPosition([{ x: 300, y: 40 }, { x: 120, y: 500 }, { x: 640, y: 200 }])).toEqual({ x: 120, y: 500 + ROW_GAP });
 });
 
-test("with no instances the placeholder is alone at the origin", () => {
-  expect(autoLayout([addInstanceNode()], [])[ADD_INSTANCE_NODE_ID]).toEqual({ x: 0, y: 0 });
+test("edges between the same pair of instances get separate lanes, across steps and jobs", () => {
+  const { edges } = buildMap(input({
+    instances: [inst("a"), inst("b"), inst("c")],
+    jobs: [job([step("a", "b"), step("a", "b"), step("a", "c")], null, { id: "j1" }), job([step("a", "b")], null, { id: "j2" })],
+  }));
+  expect(edges.map((e) => [e.id, e.data!.lane])).toEqual([["j1:1", 0], ["j1:2", 1], ["j1:3", 0], ["j2:1", 2]]);
 });
