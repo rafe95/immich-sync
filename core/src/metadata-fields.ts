@@ -11,6 +11,7 @@ import { checkInstance } from "./check.ts";
 import { requestOpts, validateInstanceInput, type Instance } from "./instance.ts";
 import { checkPermissions, metadataSyncPermissions } from "./permissions.ts";
 import { applyAlbumMembershipAdditions, planAlbumMembershipAdditions } from "./metadata-albums.ts";
+import { applyEditCopy, planEditCopy } from "./metadata-edits.ts";
 import { applyTagAdditions, planTagAdditions, tagValues } from "./metadata-tags.ts";
 
 export type MetadataField =
@@ -21,7 +22,8 @@ export type MetadataField =
   | "location"
   | "dateTimeOriginal"
   | "albums"
-  | "tags";
+  | "tags"
+  | "edits";
 
 export type MetadataFieldsOptions = {
   source: Instance;
@@ -34,6 +36,11 @@ export type MetadataFieldsOptions = {
   createMissingAlbums?: boolean;
   /** Add source tags (matched by exact value, created on the target if missing) to the target asset. */
   includeTags?: boolean;
+  /**
+   * Copy crop/rotate/mirror edits to a target asset that has none. A target with different edits is left unchanged
+   * and reported. Off by default.
+   */
+  includeEdits?: boolean;
   signal?: AbortSignal;
   /**
    * Called synchronously as each asset finishes (in assetIds order, before the run resolves). Contains
@@ -110,6 +117,8 @@ const ALBUM_SCOPE_WARNING =
   "With includeAlbums enabled, owned source album memberships are added to exact-name target albums; target-only memberships and album settings are preserved.";
 const ALBUM_CREATE_WARNING =
   "With createMissingAlbums enabled, missing owned target albums are created (private, name only) before the asset is added.";
+const EDIT_SCOPE_WARNING =
+  "With includeEdits enabled, source crop/rotate/mirror edits are copied to target assets that have no edits; target assets with different edits are left unchanged.";
 const TAG_SCOPE_WARNING =
   "With includeTags enabled, source tags are added to the target asset by exact value, creating missing target tags; target-only tags are preserved.";
 
@@ -143,7 +152,7 @@ function validateOptions(options: MetadataFieldsOptions): void {
   if (options.includeAlbums !== undefined && typeof options.includeAlbums !== "boolean") {
     throw new MetadataFieldsError("includeAlbums must be a boolean.");
   }
-  for (const name of ["createMissingAlbums", "includeTags"] as const) {
+  for (const name of ["createMissingAlbums", "includeTags", "includeEdits"] as const) {
     if (options[name] !== undefined && typeof options[name] !== "boolean") {
       throw new MetadataFieldsError(`${name} must be a boolean.`);
     }
@@ -165,6 +174,7 @@ async function preflight(
   includeAlbums: boolean,
   createMissingAlbums: boolean,
   includeTags: boolean,
+  includeEdits: boolean,
 ) {
   const result = await checkInstance(instance);
   const user = result.user;
@@ -174,7 +184,7 @@ async function preflight(
   }
   const { missing } = checkPermissions(
     result.permissions,
-    metadataSyncPermissions(label, { includeAlbums, createMissingAlbums, includeTags }),
+    metadataSyncPermissions(label, { includeAlbums, createMissingAlbums, includeTags, includeEdits }),
   );
   if (missing.length > 0) {
     throw new MetadataFieldsError(`${label} metadata fields requires permissions: ${missing.join(", ")}.`);
@@ -187,9 +197,10 @@ async function preflight(
  * reported: Promise.all would report whichever server happened to answer first, so the message would vary from run to run.
  */
 async function preflightBoth(
-  options: Pick<MetadataFieldsOptions, "source" | "target" | "includeAlbums" | "createMissingAlbums" | "includeTags">,
+  options: Pick<MetadataFieldsOptions, "source" | "target" | "includeAlbums" | "createMissingAlbums" | "includeTags" | "includeEdits">,
 ) {
-  const flags = [options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true] as const;
+  const flags = [options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true,
+    options.includeEdits === true] as const;
   const [source, target] = await Promise.allSettled([
     preflight(options.source, "source", ...flags),
     preflight(options.target, "target", ...flags),
@@ -411,17 +422,25 @@ async function syncOneAsset(
     const tagPlan = options.includeTags
       ? await planTagAdditions(options.target, source.tags, target.tags, signal)
       : undefined;
+    const editPlan = options.includeEdits
+      ? await planEditCopy(options.source, options.target, source.id, target.id, signal)
+      : undefined;
     signal?.throwIfAborted();
 
     const plannedAlbums = albumPlan.map((addition) => addition.albumName);
     const plannedTags = tagPlan?.values ?? [];
     const skippedAlbums = albumPlan.skippedMissing ?? [];
-    const skippedNote = skippedAlbums.length > 0
-      ? `Albums missing on target were not created (createMissingAlbums is off): ${skippedAlbums.map((name) => JSON.stringify(name)).join(", ")}.`
-      : undefined;
+    const notes = [
+      ...(skippedAlbums.length > 0
+        ? [`Albums missing on target were not created (createMissingAlbums is off): ${skippedAlbums.map((name) => JSON.stringify(name)).join(", ")}.`]
+        : []),
+      ...(editPlan?.kind === "conflict" ? [editPlan.message] : []),
+    ];
+    const skippedNote = notes.length > 0 ? notes.join(" ") : undefined;
     const plannedFields: MetadataField[] = [...scalarFields];
     if (plannedAlbums.length > 0) plannedFields.push("albums");
     if (plannedTags.length > 0) plannedFields.push("tags");
+    if (editPlan?.kind === "apply") plannedFields.push("edits");
     if (plannedFields.length === 0) {
       return resultFor(id, fileName, "already-synced", [], { targetId, ...(skippedNote ? { message: skippedNote } : {}) });
     }
@@ -503,6 +522,21 @@ async function syncOneAsset(
       }
     }
 
+    if (editPlan?.kind === "apply") {
+      try {
+        await applyEditCopy(options.target, target.id, editPlan.edits, signal);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        return resultFor(id, fileName, "failed", changedFields, {
+          targetId,
+          changedAlbums,
+          changedTags,
+          message: safeError(error),
+        });
+      }
+      changedFields = [...changedFields, "edits"];
+    }
+
     return resultFor(id, fileName, "updated", changedFields, {
       targetId,
       changedAlbums,
@@ -557,6 +591,7 @@ export async function syncMetadataFields(options: MetadataFieldsOptions): Promis
     ...(options.includeAlbums ? [ALBUM_SCOPE_WARNING] : []),
     ...(options.createMissingAlbums ? [ALBUM_CREATE_WARNING] : []),
     ...(options.includeTags ? [TAG_SCOPE_WARNING] : []),
+    ...(options.includeEdits ? [EDIT_SCOPE_WARNING] : []),
   ];
   const events: MetadataFieldsEvent[] = [
     ...warnings.map((message) => ({ type: "warning" as const, message })),
@@ -591,7 +626,7 @@ export async function syncMetadataFields(options: MetadataFieldsOptions): Promis
  * without touching any asset. Lets callers refuse a run before any upload or other change.
  */
 export async function preflightMetadataFields(
-  options: Pick<MetadataFieldsOptions, "source" | "target" | "includeAlbums" | "createMissingAlbums" | "includeTags">,
+  options: Pick<MetadataFieldsOptions, "source" | "target" | "includeAlbums" | "createMissingAlbums" | "includeTags" | "includeEdits">,
 ): Promise<{ sourceVersion: string; targetVersion: string }> {
   for (const [label, instance] of [["source", options.source], ["target", options.target]] as const) {
     const problems = validateInstanceInput(instance);

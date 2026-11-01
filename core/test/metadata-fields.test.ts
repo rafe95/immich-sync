@@ -359,3 +359,168 @@ describe("syncMetadataFields date taken with time zone", () => {
     expect(result.assets[0]).toMatchObject({ status: "failed", message: "HTTP 500: Asset update failed" });
   });
 });
+
+describe("syncMetadataFields crop/rotate/mirror edits (includeEdits)", () => {
+  const crop = { action: "crop" as const, parameters: { x: 1, y: 2, width: 30, height: 40 } };
+  const rotate = { action: "rotate" as const, parameters: { angle: 90 } };
+  const editPuts = (server: ReturnType<typeof fake>) =>
+    server.requests.filter((request) => request.method === "PUT" && /\/edits$/.test(request.path));
+
+  test("copies source edits to a target without edits and verifies them", async () => {
+    const sourceAsset = asset("s-e1", { edits: [crop, rotate] });
+    const targetAsset = asset("t-e1");
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id], { includeEdits: true }));
+
+    expect(result.assets[0]).toMatchObject({ status: "updated", changedFields: ["edits"], targetId: targetAsset.id });
+    expect(editPuts(target)).toHaveLength(1);
+    expect(editPuts(target)[0]?.body).toEqual({ edits: [crop, rotate] });
+    expect(targetAsset.edits).toEqual([crop, rotate]);
+    expect(sourceAsset.edits).toEqual([crop, rotate]);
+    expect(editPuts(source)).toHaveLength(0);
+    expect(result.warnings.some((warning) => warning.includes("includeEdits"))).toBe(true);
+  });
+
+  test("is off by default and makes no edit requests", async () => {
+    const sourceAsset = asset("s-e2", { edits: [crop] });
+    const targetAsset = asset("t-e2");
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id]));
+
+    expect(result.assets[0]?.status).toBe("already-synced");
+    expect([...source.requests, ...target.requests].some((request) => request.path.endsWith("/edits"))).toBe(false);
+  });
+
+  test("never replaces or removes different target edits, and reports them", async () => {
+    const sourceAsset = asset("s-e3", { edits: [crop] });
+    const targetAsset = asset("t-e3", { edits: [rotate] });
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id], { includeEdits: true }));
+
+    expect(result.assets[0]?.status).toBe("already-synced");
+    expect(result.assets[0]?.message).toContain("different edits");
+    expect(editPuts(target)).toHaveLength(0);
+    expect(targetAsset.edits).toEqual([rotate]);
+  });
+
+  test("leaves unedited sources and identical edits alone; reruns are idempotent", async () => {
+    const noEdits = asset("s-e4a");
+    const same = asset("s-e4b", { edits: [crop], checksum: checksum("two") });
+    const targetNone = asset("t-e4a", { edits: [rotate] });
+    const targetSame = asset("t-e4b", { edits: [crop], checksum: checksum("two") });
+    const source = fake({ assets: [noEdits, same] });
+    const target = fake({ assets: [targetNone, targetSame] });
+
+    const result = await syncMetadataFields(options(source, target, [noEdits.id, same.id], { includeEdits: true }));
+
+    expect(result.assets.map((item) => item.status)).toEqual(["already-synced", "already-synced"]);
+    expect(editPuts(target)).toHaveLength(0);
+    expect(targetNone.edits).toEqual([rotate]);
+
+    const first = asset("s-e4c", { edits: [crop], checksum: checksum("three") });
+    const firstTarget = asset("t-e4c", { checksum: checksum("three") });
+    const s2 = fake({ assets: [first] });
+    const t2 = fake({ assets: [firstTarget] });
+    await syncMetadataFields(options(s2, t2, [first.id], { includeEdits: true }));
+    const again = await syncMetadataFields(options(s2, t2, [first.id], { includeEdits: true }));
+    expect(again.assets[0]?.status).toBe("already-synced");
+    expect(editPuts(t2)).toHaveLength(1);
+  });
+
+  test("dry run reports the edit change without writing", async () => {
+    const sourceAsset = asset("s-e5", { edits: [crop] });
+    const targetAsset = asset("t-e5");
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id], { includeEdits: true, dryRun: true }));
+
+    expect(result.assets[0]).toMatchObject({ status: "would-update", changedFields: ["edits"] });
+    expect(editPuts(target)).toHaveLength(0);
+    expect(targetAsset.edits).toBeUndefined();
+  });
+
+  test("combines with scalar fields in one result", async () => {
+    const sourceAsset = asset("s-e6", { isFavorite: true, edits: [crop] });
+    const targetAsset = asset("t-e6");
+    const source = fake({ assets: [sourceAsset] });
+    const target = fake({ assets: [targetAsset] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id], { includeEdits: true }));
+
+    expect(result.assets[0]).toMatchObject({ status: "updated", changedFields: ["isFavorite", "edits"] });
+  });
+
+  test("fails the asset on a rejected or unverifiable edit write and continues with the next", async () => {
+    const a = asset("s-e7a", { edits: [crop] });
+    const b = asset("s-e7b", { edits: [crop], checksum: checksum("b") });
+    const ta = asset("t-e7a");
+    const tb = asset("t-e7b", { checksum: checksum("b") });
+    const source = fake({ assets: [a, b] });
+    const target = fake({ assets: [ta, tb], editFailures: ["t-e7a"] });
+
+    const result = await syncMetadataFields(options(source, target, [a.id, b.id], { includeEdits: true }));
+    expect(result.assets.map((item) => item.status)).toEqual(["failed", "updated"]);
+    expect(result.assets[0]?.changedFields).toEqual([]);
+
+    const ignoring = fake({ assets: [asset("t-e7c")], ignoreEdits: true });
+    const verifyResult = await syncMetadataFields(options(
+      fake({ assets: [asset("s-e7c", { edits: [crop] })] }),
+      ignoring,
+      ["s-e7c"],
+      { includeEdits: true },
+    ));
+    expect(verifyResult.assets[0]?.status).toBe("failed");
+    expect(verifyResult.assets[0]?.message).toContain("verified");
+  });
+
+  test("a failing edit lookup fails only that asset", async () => {
+    const sourceAsset = asset("s-e8", { edits: [crop] });
+    const source = fake({ assets: [sourceAsset], editGetFailures: ["s-e8"] });
+    const target = fake({ assets: [asset("t-e8")] });
+
+    const result = await syncMetadataFields(options(source, target, [sourceAsset.id], { includeEdits: true }));
+
+    expect(result.assets[0]?.status).toBe("failed");
+    expect(editPuts(target)).toHaveLength(0);
+  });
+
+  test("does not write edits when cancelled before or during discovery", async () => {
+    const sourceAsset = asset("s-e9", { edits: [crop] });
+    const targetAsset = asset("t-e9");
+    const source = fake({ assets: [sourceAsset] });
+    const controller = new AbortController();
+    const target = fake({ assets: [targetAsset], onMetadataSearch: () => controller.abort() });
+
+    const during = await syncMetadataFields(options(source, target, [sourceAsset.id], {
+      includeEdits: true,
+      signal: controller.signal,
+    }));
+    expect(during.assets[0]?.status).toBe("cancelled");
+
+    const pre = new AbortController();
+    pre.abort();
+    const before = await syncMetadataFields(options(source, target, [sourceAsset.id], {
+      includeEdits: true,
+      signal: pre.signal,
+    }));
+    expect(before.assets[0]?.status).toBe("cancelled");
+    expect(editPuts(target)).toHaveLength(0);
+    expect(targetAsset.edits).toBeUndefined();
+  });
+
+  test("requires edit permissions only when includeEdits is on", async () => {
+    const base = ["user.read", "asset.read", "asset.update"];
+    const source = fake({ permissions: base });
+    const target = fake({ permissions: base });
+    await expect(syncMetadataFields(options(source, target, ["x"], { includeEdits: true })))
+      .rejects.toThrow("asset.edit");
+    await expect(syncMetadataFields(options(source, target, ["x"]))).resolves.toBeDefined();
+  });
+});
