@@ -86,7 +86,7 @@ describe("Settings screen", () => {
     const headings = [...root.querySelectorAll("h2")].map((h) => h.textContent?.trim());
     expect(headings).toEqual(["Change password", "Run history", "Appearance"]);
     expect((root.querySelector("#ret-hint")?.previousElementSibling as HTMLInputElement).value).toBe("90");
-    expect(root.querySelector("[role=group][aria-label='Colour theme']")).toBeTruthy();
+    expect(root.querySelector("[role=radiogroup][aria-label='Colour theme']")).toBeTruthy();
   });
 
   test("ordinary users get no run-history card but keep appearance", async () => {

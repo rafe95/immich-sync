@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Toggle from "./ui/Toggle.svelte";
+  import Segmented from "./ui/Segmented.svelte";
   import { ApiError } from "./lib/api.ts";
   import { relativeIn } from "./lib/jobCard.ts";
   import { api } from "./lib/session.svelte.ts";
@@ -6,6 +8,8 @@
     browserTimezone, buildScheduleBody, cronFromForm, defaultScheduleForm, describeCron, filterTimezones, formatWhen, formFromSchedule, hasMove, isValidTimezone,
     needsMoveConfirmation, timezoneList, validateScheduleForm, WEEKDAYS, type JobRecord, type ScheduleForm, type ScheduleRecord,
   } from "./lib/jobs.ts";
+
+  const PRESET_OPTIONS = [{ value: "hourly", label: "Hourly" }, { value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "custom", label: "Custom cron" }] as const;
 
   let { job, onsaved, onclose }: { job: JobRecord; onsaved: (schedule: ScheduleRecord | null) => void; onclose: () => void } = $props();
 
@@ -70,19 +74,6 @@
   }
 </script>
 
-{#snippet toggle(label: string, hint: string, checked: boolean, onchange: (v: boolean) => void)}
-  <label class="flex cursor-pointer items-start gap-3">
-    <input
-      type="checkbox"
-      role="switch"
-      class="relative mt-0.5 h-6 w-10 shrink-0 cursor-pointer appearance-none rounded-full bg-surface-300-700 transition-colors checked:bg-primary-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 after:absolute after:top-0.5 after:left-0.5 after:size-5 after:rounded-full after:bg-surface-50 after:transition-transform after:content-[''] checked:after:translate-x-4"
-      {checked}
-      onchange={(e) => onchange(e.currentTarget.checked)}
-    />
-    <span>{label}<span class="block text-sm opacity-70">{hint}</span></span>
-  </label>
-{/snippet}
-
 <div class="space-y-3">
   <nav aria-label="Breadcrumb" class="text-sm">
     <ol class="flex flex-wrap items-center gap-1.5">
@@ -101,13 +92,7 @@
       <div class="space-y-5">
         <fieldset class="space-y-3">
           <legend class="label-text">Repeat</legend>
-          <div class="inline-flex max-w-full flex-wrap overflow-hidden rounded-container border border-surface-300-700">
-            {#each [["hourly", "Hourly"], ["daily", "Daily"], ["weekly", "Weekly"], ["custom", "Custom cron"]] as const as [value, label] (value)}
-              <label class="cursor-pointer px-4 py-2 text-sm has-checked:preset-filled-primary-500 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-primary-500">
-                <input class="sr-only" type="radio" name="preset" {value} bind:group={form.preset} />{label}
-              </label>
-            {/each}
-          </div>
+          <Segmented options={PRESET_OPTIONS} value={form.preset} name="preset" ariaLabel="Repeat" onchange={(v) => (form.preset = v)} />
           {#if form.preset === "hourly"}
             <label class="label max-w-xs"><span class="label-text">At minute</span><input class="input" type="number" min="0" max="59" bind:value={form.minute} /></label>
           {:else if form.preset === "daily" || form.preset === "weekly"}
@@ -152,21 +137,20 @@
         </div>
 
         <div class="space-y-3">
-          {@render toggle("Enabled", "Untick to pause; the definition is kept.", form.enabled, (v) => (form.enabled = v))}
-          {@render toggle("Run once on start-up if a run was missed", "Off by default: if the app was stopped at the scheduled time, that run is skipped.", form.catchUp, (v) => (form.catchUp = v))}
+          <Toggle bind:checked={form.enabled} label="Enabled" hint="Untick to pause; the definition is kept." />
+          <Toggle bind:checked={form.catchUp} label="Run once on start-up if a run was missed" hint="Off by default: if the app was stopped at the scheduled time, that run is skipped." />
         </div>
 
         {#if moves}
           <div class="rounded-container border p-4 {needsConfirm ? 'preset-tonal-warning border-warning-500' : 'preset-tonal-surface border-surface-300-700'}" role="group" aria-label="Move confirmation">
             <p class="font-semibold">Scheduled move needs confirmation</p>
-            <label class="mt-2 flex items-start gap-2">
-              <input class="checkbox mt-1" type="checkbox" bind:checked={confirmMove} aria-required={needsConfirm} />
-              <span>
+            <div class="mt-2">
+              <Toggle bind:checked={confirmMove}>
                 <strong>I confirm this schedule trashes assets.</strong>
                 This job contains a move step. On every scheduled run, assets will be sent to the source's trash after they are verified on the target, with nobody asked first. Nothing is permanently deleted.
                 {#if saved?.moveConfirmedAt}<span class="block text-sm opacity-70">Confirmed before on {formatWhen(saved.moveConfirmedAt)}; changing the job's steps requires confirming again.</span>{/if}
-              </span>
-            </label>
+              </Toggle>
+            </div>
           </div>
         {/if}
       </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ProgressBar from "../ui/ProgressBar.svelte";
   import { formatBytes, operationLabel, stepSummaries, type ConsoleState, type RunStepSettings } from "../lib/runs.ts";
 
   /**
@@ -34,9 +35,7 @@
     {#if live}
       <div class="space-y-1.5">
         <div class="flex justify-between gap-2"><strong>{live.label ?? "Progress"}</strong><span>{live.done}{live.total !== null ? ` / ${live.total}` : ""}</span></div>
-        <div class="h-2 overflow-hidden rounded-full bg-surface-200-800" role="progressbar" aria-label="Step progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={livePercent ?? undefined}>
-          <div class="h-full rounded-full bg-primary-500 {livePercent === null ? 'w-1/3 animate-pulse' : ''}" style={livePercent === null ? undefined : `width: ${livePercent}%`}></div>
-        </div>
+        <ProgressBar percent={livePercent} label="Step progress" />
       </div>
     {/if}
     {#if block?.totals}
