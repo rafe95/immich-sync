@@ -43,7 +43,8 @@ export function stepPercents(state: ConsoleState, run: Run): Record<number, numb
 }
 
 const X0 = 40;
-const DX = 290;
+// Wide enough that the edge label ("after checks") is not hidden behind the neighbouring nodes.
+const DX = 360;
 
 function chips(s: RunStepSettings): string[] {
   const out: string[] = [s.options.kind];

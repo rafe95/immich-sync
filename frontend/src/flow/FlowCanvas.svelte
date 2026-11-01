@@ -3,6 +3,7 @@
   import InstanceNode from "./InstanceNode.svelte";
   import StepNode from "./StepNode.svelte";
   import LabelEdge from "./LabelEdge.svelte";
+  import Refit from "./Refit.svelte";
 
   let {
     nodes = $bindable(),
@@ -10,10 +11,13 @@
     nodeTypes = { instance: InstanceNode, step: StepNode } as unknown as NodeTypes,
     minimap = false,
     lockable = false,
+    fitKey,
     onnodeclick,
     onedgeclick,
     onnodedragstop,
   }: {
+    /** When this value changes the view is fitted again (e.g. the node count). */
+    fitKey?: unknown;
     nodes: Node[];
     edges: Edge[];
     nodeTypes?: NodeTypes;
@@ -27,13 +31,14 @@
   const edgeTypes = { label: LabelEdge } as never;
 </script>
 
-<div class="h-full min-h-80 w-full rounded-container border border-surface-300-700">
+<div class="h-full w-full rounded-container border border-surface-300-700">
   <SvelteFlow
     bind:nodes
     bind:edges
     {nodeTypes}
     {edgeTypes}
     fitView
+    fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
     nodesConnectable={false}
     nodesDraggable={lockable}
     deleteKey={null}
@@ -45,5 +50,6 @@
     <Background variant={BackgroundVariant.Dots} />
     <Controls showLock={false} />
     {#if minimap}<MiniMap pannable zoomable />{/if}
+    {#if fitKey !== undefined}<Refit key={fitKey} />{/if}
   </SvelteFlow>
 </div>

@@ -31,7 +31,7 @@
 </script>
 
 <div class="space-y-3">
-  <div class="h-52">
+  <div class="h-64">
     <FlowCanvas bind:nodes bind:edges {nodeTypes} onnodeclick={pick} />
   </div>
   {#if selected !== null}

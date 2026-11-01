@@ -99,6 +99,7 @@
       bind:edges
       {nodeTypes}
       lockable
+      fitKey={steps.length}
       onnodeclick={(n) => onselect(n.type === "step" ? n.id : null)}
       onnodedragstop={dragStop}
     />

@@ -69,8 +69,8 @@ describe("buildRunGraph", () => {
     const g = buildRunGraph(r, state());
     expect(g.nodes.length).toBe(4);
     expect(g.nodes.map((n) => n.id)).toEqual(["preflight", "step-1", "step-2", "step-3"]);
-    expect(g.nodes[1]!.position.x).toBe(330);
-    expect(g.nodes[2]!.position.x).toBe(620);
+    expect(g.nodes[1]!.position.x).toBe(400);
+    expect(g.nodes[2]!.position.x).toBe(760);
     expect(g.edges.map((e) => (e.data as { style: string }).style)).toEqual(["solid", "running", "muted"]);
   });
   test("a run with no steps has only the preflight node", () => {
