@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { Edge, Node } from "@xyflow/svelte";
   import { api } from "../lib/session.svelte.ts";
   import type { Instance } from "../lib/api.ts";
@@ -7,8 +8,20 @@
   import MapJobPanel from "./MapJobPanel.svelte";
   import InstanceList from "../InstanceList.svelte";
   import { autoLayout, buildMap, loadLayout, mergeLayout, saveLayout, type Layout, type MapInput } from "../lib/flow/map.ts";
+  import { livePercents, withLivePercents } from "../lib/flow/live.ts";
+  import { createLiveRuns } from "../lib/flow/liveRuns.svelte.ts";
 
-  let { map, onopenrun, onchanged }: { map: MapInput; onopenrun?: (runId: string) => void; onchanged: () => void } = $props();
+  let { map, onopenrun, onopenjob, onchanged }: { map: MapInput; onopenrun?: (runId: string) => void; onopenjob?: (jobId: string) => void; onchanged: () => void } = $props();
+
+  // A live event stream per running run feeds the percentages on the lines and the job panel.
+  const live = createLiveRuns(api);
+  $effect(() => {
+    const ids = map.active.filter((a) => !a.queued).map((a) => a.run.id);
+    untrack(() => live.sync(ids));
+  });
+  $effect(() => () => live.stopAll());
+  // A string, so the map is only rebuilt when a percentage actually changes, not on every log line.
+  const percentsKey = $derived(JSON.stringify(livePercents(map.active, (id) => live.get(id)?.state)));
 
   let saved = $state<Layout | null>(loadLayout());
   let mode = $state<"map" | "list">("map");
@@ -24,7 +37,7 @@
   let moved = $state<Layout>({});
 
   $effect(() => {
-    const built = buildMap(map);
+    const built = buildMap(withLivePercents(map, JSON.parse(percentsKey) as Record<string, number>));
     const auto = autoLayout(built.nodes, built.edges);
     const pos = mergeLayout(auto, { ...(saved ?? {}), ...moved });
     nodes = built.nodes.map((n) => ({ ...n, position: pos[n.id] ?? n.position, data: { ...n.data, selected: n.id === selectedInstanceId } }));
@@ -136,7 +149,7 @@
       {:else if instance}
         <MapInstancePanel {instance} {map} {onchanged} {onsaved} {ondeleted} onclose={closePanels} />
       {:else if job}
-        <MapJobPanel {job} {map} {onopenrun} {onchanged} onclose={closePanels} />
+        <MapJobPanel {job} {map} {onopenrun} {onopenjob} eventsFor={(id) => live.get(id)} {onchanged} onclose={closePanels} />
       {/if}
     </div>
     {#if mode === "map"}

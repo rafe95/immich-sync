@@ -30,6 +30,8 @@
   // Held here so leaving the Run or History screen and coming back keeps the run on screen (the run itself never depends on the page).
   let activeRunId = $state<string | null>(null);
   let historyRunId = $state<string | null>(null);
+  // Set by the dashboard map's "Open job"; the Jobs screen opens that job's editor and clears it.
+  let openJobId = $state<string | null>(null);
   let prefill = $state<RunForm | null>(null);
   function runRealFromHistory(run: RunRecord) {
     prefill = formFromRun(run);
@@ -51,7 +53,7 @@
   $effect(() => {
     if (session.status === "anonymous") {
       current = "dashboard";
-      activeRunId = historyRunId = prefill = null;
+      activeRunId = historyRunId = prefill = openJobId = null;
     }
   });
 </script>
@@ -114,9 +116,9 @@
         {:else if current === "history"}
           <History bind:openId={historyRunId} onrunreal={runRealFromHistory} />
         {:else if current === "jobs"}
-          <Jobs onrun={(id) => { activeRunId = id; prefill = null; current = "run"; }} />
+          <Jobs bind:openJobId onrun={(id) => { activeRunId = id; prefill = null; current = "run"; }} />
         {:else}
-          <Dashboard onopenrun={(id) => { historyRunId = id; current = "history"; }} />
+          <Dashboard onopenrun={(id) => { historyRunId = id; current = "history"; }} onopenjob={(id) => { openJobId = id; current = "jobs"; }} />
         {/if}
       </main>
     </div>

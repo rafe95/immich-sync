@@ -7,7 +7,7 @@
   import { statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
   import { api } from "./lib/session.svelte.ts";
 
-  let { onrun }: { onrun: (runId: string) => void } = $props();
+  let { onrun, openJobId = $bindable(null) }: { onrun: (runId: string) => void; openJobId?: string | null } = $props();
 
   let jobs = $state<JobRecord[]>([]);
   let instances = $state<Instance[]>([]);
@@ -40,7 +40,14 @@
       loading = false;
     }
   }
-  onMount(load);
+  // "Open job" on the dashboard map lands here with the job to edit.
+  onMount(async () => {
+    await load();
+    const wanted = openJobId;
+    openJobId = null;
+    const job = wanted ? jobs.find((j) => j.id === wanted) : undefined;
+    if (job) mode = { kind: "edit", job };
+  });
 
   async function start(job: JobRecord, dryRun: boolean) {
     busyId = job.id;

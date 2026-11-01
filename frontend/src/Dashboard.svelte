@@ -7,7 +7,7 @@
   import InstanceMap from "./flow/InstanceMap.svelte";
 
   /** Optional: opens a run in the History screen. Without it, run names are shown as plain text. */
-  let { onopenrun }: { onopenrun?: (runId: string) => void } = $props();
+  let { onopenrun, onopenjob }: { onopenrun?: (runId: string) => void; onopenjob?: (jobId: string) => void } = $props();
 
   let data = $state<DashboardResponse | null>(null);
   let map = $state<MapInput | null>(null);
@@ -93,7 +93,7 @@
     <section aria-labelledby="d-map" class="space-y-2">
       <h2 id="d-map" class="h5">Instances</h2>
       {#if map}
-        <InstanceMap {map} {onopenrun} onchanged={load} />
+        <InstanceMap {map} {onopenrun} {onopenjob} onchanged={load} />
       {/if}
     </section>
 
