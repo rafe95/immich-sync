@@ -182,6 +182,31 @@ async function preflight(
   return { user, version, permissions: result.permissions };
 }
 
+/**
+ * Runs both instance preflights at once and refuses a same-server, same-user pair. When both preflights fail, the source is
+ * reported: Promise.all would report whichever server happened to answer first, so the message would vary from run to run.
+ */
+async function preflightBoth(
+  options: Pick<MetadataFieldsOptions, "source" | "target" | "includeAlbums" | "createMissingAlbums" | "includeTags">,
+) {
+  const flags = [options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true] as const;
+  const [source, target] = await Promise.allSettled([
+    preflight(options.source, "source", ...flags),
+    preflight(options.target, "target", ...flags),
+  ]);
+  if (source.status === "rejected") throw source.reason;
+  if (target.status === "rejected") throw target.reason;
+  const sourceCheck = source.value;
+  const targetCheck = target.value;
+  if (
+    normalizedApiUrl(options.source.apiUrl) === normalizedApiUrl(options.target.apiUrl) &&
+    sourceCheck.user.id === targetCheck.user.id
+  ) {
+    throw new MetadataFieldsError("Source and target must be different servers or users.");
+  }
+  return { sourceCheck, targetCheck };
+}
+
 function validateAssetResponse(asset: AssetResponseDto, id: string, label: string): void {
   if (
     !asset ||
@@ -497,16 +522,7 @@ async function syncOneAsset(
 
 export async function syncMetadataFields(options: MetadataFieldsOptions): Promise<MetadataFieldsResult> {
   validateOptions(options);
-  const [sourceCheck, targetCheck] = await Promise.all([
-    preflight(options.source, "source", options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true),
-    preflight(options.target, "target", options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true),
-  ]);
-  if (
-    normalizedApiUrl(options.source.apiUrl) === normalizedApiUrl(options.target.apiUrl) &&
-    sourceCheck.user.id === targetCheck.user.id
-  ) {
-    throw new MetadataFieldsError("Source and target must be different servers or users.");
-  }
+  const { sourceCheck, targetCheck } = await preflightBoth(options);
 
   const assets: MetadataFieldAssetResult[] = [];
   const record = (asset: MetadataFieldAssetResult) => {
@@ -584,16 +600,6 @@ export async function preflightMetadataFields(
   if (options.createMissingAlbums === true && options.includeAlbums !== true) {
     throw new MetadataFieldsError("createMissingAlbums requires includeAlbums.");
   }
-  const flags = [options.includeAlbums === true, options.createMissingAlbums === true, options.includeTags === true] as const;
-  const [sourceCheck, targetCheck] = await Promise.all([
-    preflight(options.source, "source", ...flags),
-    preflight(options.target, "target", ...flags),
-  ]);
-  if (
-    normalizedApiUrl(options.source.apiUrl) === normalizedApiUrl(options.target.apiUrl) &&
-    sourceCheck.user.id === targetCheck.user.id
-  ) {
-    throw new MetadataFieldsError("Source and target must be different servers or users.");
-  }
+  const { sourceCheck, targetCheck } = await preflightBoth(options);
   return { sourceVersion: sourceCheck.version, targetVersion: targetCheck.version };
 }
