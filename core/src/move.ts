@@ -114,10 +114,10 @@ export function isVerifiedCopy(asset: CopyAssetResult): boolean {
 }
 
 /** Fresh checksum lookup right before trashing; every component needs an active target asset. */
-async function stillVerified(target: Instance, planned: PlannedAsset): Promise<boolean> {
+async function stillVerified(target: Instance, planned: PlannedAsset, signal?: AbortSignal): Promise<boolean> {
   for (const component of planned.components) {
     if (!component.checksum) return false;
-    const found = await findAssetsByChecksum(target, component.checksum);
+    const found = await findAssetsByChecksum(target, component.checksum, signal);
     if (!found.some((asset) => !asset.isTrashed)) return false;
   }
   return true;
@@ -273,12 +273,21 @@ export async function moveAssets(options: MoveOptions): Promise<TransferPlan | M
     }
 
     try {
-      if (!(await stillVerified(options.target, plannedById.get(planned.id)!))) {
+      if (!(await stillVerified(options.target, plannedById.get(planned.id)!, signal))) {
         record(notTrashed("failed", metadataStatus, "Target verification failed immediately before trashing; not trashed."));
         continue;
       }
     } catch (error) {
-      record(notTrashed("failed", metadataStatus, `Target verification before trashing failed (${safeError(error)}); not trashed.`));
+      // A cancelled lookup is not a failed verification: nothing is trashed, and a rerun finishes the move.
+      record(signal?.aborted
+        ? notTrashed("cancelled", metadataStatus, "Cancelled during the final target verification; not trashed, rerun to finish the move.")
+        : notTrashed("failed", metadataStatus, `Target verification before trashing failed (${safeError(error)}); not trashed.`));
+      continue;
+    }
+    // The verification can finish just as a cancel arrives. The trash request below is deliberately not abortable (an
+    // aborted request may still have been applied, leaving the result unknown), so the last chance to stop is here.
+    if (signal?.aborted) {
+      record(notTrashed("cancelled", metadataStatus, "Cancelled before trashing; verified on target, rerun to finish the move."));
       continue;
     }
 

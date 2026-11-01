@@ -301,3 +301,42 @@ describe("moveAssets", () => {
     expect(target.uploadedMedia).toHaveLength(0);
   });
 });
+
+describe("moveAssets cancelled during the final target verification", () => {
+  /** How many checksum searches the target answers when nothing is cancelled; the last ones are the final verification. */
+  async function targetChecksumSearches(): Promise<number> {
+    const one = bytes("one");
+    const source = fake({ assets: [mediaAsset("a1", one)], originals: { a1: one } });
+    let calls = 0;
+    const target = fake({ onMetadataSearch: (checksumValue) => { if (checksumValue) calls++; } });
+    await runMove(options(source, target));
+    return calls;
+  }
+
+  for (const [name, fromEnd] of [["its first request", 1], ["its last request", 0]] as const) {
+    test(`a cancel on ${name} does not trash the verified asset`, async () => {
+      const total = await targetChecksumSearches();
+      expect(total).toBeGreaterThanOrEqual(2);
+      const controller = new AbortController();
+      const one = bytes("one");
+      const a1 = mediaAsset("a1", one);
+      const source = fake({ assets: [a1], originals: { a1: one } });
+      let calls = 0;
+      const target = fake({
+        onMetadataSearch: (checksumValue) => {
+          if (!checksumValue) return;
+          calls++;
+          if (calls === total - fromEnd) controller.abort();
+        },
+      });
+
+      const result = await runMove(options(source, target, { signal: controller.signal }));
+
+      expect(result.assets.map((asset) => asset.status)).toEqual(["cancelled"]);
+      expect(result.assets[0]!.reason).toMatch(/cancelled/i);
+      expect(result.summary).toMatchObject({ trashed: 0, cancelled: 1, failed: 0 });
+      expect(a1.isTrashed).toBe(false);
+      expect(trashRequests(source)).toHaveLength(0);
+    });
+  }
+});
