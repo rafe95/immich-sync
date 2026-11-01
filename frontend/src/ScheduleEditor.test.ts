@@ -19,7 +19,9 @@ describe("ScheduleEditor", () => {
     expect(root.querySelectorAll("input[type=radio][name=preset]")).toHaveLength(4);
     expect((root.querySelector("input[type=radio][value=weekly]") as HTMLInputElement).checked).toBe(true);
     expect(root.querySelectorAll("input[type=checkbox]:not([role=switch])").length).toBeGreaterThanOrEqual(8);
-    expect(root.querySelectorAll("input[role=switch]")).toHaveLength(2);
+    // Enabled, catch-up and the move confirmation are Skeleton switches (hidden checkbox labelled by the switch label).
+    expect(root.querySelectorAll("[data-scope=switch][data-part=root]")).toHaveLength(3);
+    expect(root.querySelectorAll("input[type=checkbox][aria-labelledby^='switch:']")).toHaveLength(3);
     expect(root.querySelector("[role=group][aria-label='Move confirmation']")!.textContent).toContain("Scheduled move needs confirmation");
     expect(root.querySelector("aside")!.textContent).toContain("Next runs");
     expect(root.textContent).toContain("0 3 * * 0");

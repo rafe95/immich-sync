@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Toggle from "./ui/Toggle.svelte";
   import { onMount } from "svelte";
   import OperationPicker from "./OperationPicker.svelte";
   import RunSidePanels from "./RunSidePanels.svelte";
@@ -163,27 +164,21 @@
           </select>
         </label>
 
-        <label class="flex items-start gap-3">
-          <input class="checkbox mt-1" type="checkbox" bind:checked={form.metadata} disabled={form.operation === "sync_metadata"} />
-          <span>Sync metadata{form.operation === "sync_metadata" ? " (always on for this operation)" : ""}</span>
-        </label>
+        <Toggle bind:checked={form.metadata} disabled={form.operation === "sync_metadata"} label={"Sync metadata" + (form.operation === "sync_metadata" ? " (always on for this operation)" : "")} />
 
         {#if form.operation !== "move"}
-          <label class="flex items-start gap-3">
-            <input class="checkbox mt-1" type="checkbox" bind:checked={form.includeTrashed} />
-            <span>
-              Include assets in the source's trash
-              <span class="block text-sm opacity-70">Off by default. This only affects the source: an asset found only in the target's trash is still skipped, never uploaded again.</span>
-            </span>
-          </label>
+          <Toggle
+            bind:checked={form.includeTrashed}
+            label="Include assets in the source's trash"
+            hint="Off by default. This only affects the source: an asset found only in the target's trash is still skipped, never uploaded again."
+          />
         {/if}
 
-        <label class="flex items-start gap-3 rounded-container p-3 {form.dryRun ? 'preset-tonal-success' : 'preset-tonal-warning'}">
-          <input class="checkbox mt-1" type="checkbox" bind:checked={form.dryRun} />
-          <span>
+        <div class="rounded-container p-3 {form.dryRun ? 'preset-tonal-success' : 'preset-tonal-warning'}">
+          <Toggle bind:checked={form.dryRun}>
             <strong>Dry run</strong>: inspect and report only. {form.dryRun ? "No changes are made on either server." : "Off: this run will change the target" + (isMove ? " and trash source assets after verification." : ".")}
-          </span>
-        </label>
+          </Toggle>
+        </div>
 
         <p class="bg-surface-100-900 rounded-container p-3 text-sm" aria-live="polite"><strong>Summary:</strong> {summary}</p>
 
