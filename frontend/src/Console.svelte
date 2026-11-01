@@ -1,6 +1,7 @@
 <script lang="ts">
   import Toggle from "./ui/Toggle.svelte";
   import { tick } from "svelte";
+  import ProgressBar from "./ui/ProgressBar.svelte";
   import type { RunEvents } from "./lib/runEvents.svelte.ts";
   import { assetOf, eventText, formatBytes, lineVisible, stepSummaries, progressPercent, statusLabel, type EventLevel } from "./lib/runs.ts";
 
@@ -69,7 +70,7 @@
         <span>{cs.progress.label ?? "Progress"}</span>
         <span>{cs.progress.done}{cs.progress.total !== null ? ` / ${cs.progress.total}` : ""}{percent !== null ? ` (${percent}%)` : ""}</span>
       </div>
-      <progress class="h-2 w-full" max={cs.progress.total ?? undefined} value={cs.progress.total ? cs.progress.done : undefined} aria-label="Run progress"></progress>
+      <ProgressBar value={cs.progress.total ? cs.progress.done : null} max={cs.progress.total} label="Run progress" />
     </div>
   {/if}
 

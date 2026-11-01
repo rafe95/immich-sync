@@ -5,6 +5,7 @@
   import Segmented from "./ui/Segmented.svelte";
   import RunSidePanels from "./RunSidePanels.svelte";
   import RunView from "./RunView.svelte";
+  import ConfirmDialog from "./ui/ConfirmDialog.svelte";
   import { ApiError, type Instance } from "./lib/api.ts";
   import { api } from "./lib/session.svelte.ts";
   import { buildRunBody, defaultForm, formFromRun, operationLabel, type Run, type RunForm } from "./lib/runs.ts";
@@ -21,7 +22,7 @@
   let form = $state<RunForm>(prefill ? { ...prefill } : defaultForm());
   let errors = $state<string[]>([]);
   let submitting = $state(false);
-  let confirmDialog = $state<HTMLDialogElement | null>(null);
+  let confirmOpen = $state(false);
   let pendingDryRun = $state(false);
 
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -65,14 +66,14 @@
     }
     if (form.operation === "move" && !dryRun) {
       pendingDryRun = dryRun;
-      confirmDialog?.showModal();
+      confirmOpen = true;
       return;
     }
     void send(dryRun);
   }
 
   async function send(dryRun: boolean) {
-    confirmDialog?.close();
+    confirmOpen = false;
     const built = buildRunBody(form, { source: source?.alias, target: target?.alias }, dryRun);
     if (!built.ok) return;
     submitting = true;
@@ -201,17 +202,19 @@
     </div>
   {/if}
 
-  <dialog bind:this={confirmDialog} class="card preset-filled-surface-100-900 m-auto max-w-lg space-y-3 p-5 shadow-xl backdrop:bg-black/50" aria-labelledby="confirm-title">
-    <h2 id="confirm-title" class="h5">Move assets from {source?.alias ?? "the source"}?</h2>
+  <ConfirmDialog
+    open={confirmOpen}
+    title="Move assets from {source?.alias ?? 'the source'}?"
+    confirmLabel="Move and trash on {source?.alias}"
+    tone="danger"
+    onconfirm={() => send(pendingDryRun)}
+    oncancel={() => (confirmOpen = false)}
+  >
     <p>
       Each asset is copied to <strong>{target?.alias}</strong> and checked there first. Only after it is verified (and its metadata synced, if enabled) is it sent to the
       <strong>trash</strong> of <strong>{source?.alias}</strong>. Nothing is permanently deleted, and you can restore trashed assets from that server.
     </p>
-    <div class="flex flex-wrap justify-end gap-2">
-      <button type="button" class="btn preset-tonal-surface" onclick={() => confirmDialog?.close()}>Cancel</button>
-      <button type="button" class="btn preset-filled-error-500" onclick={() => send(pendingDryRun)}>Move and trash on {source?.alias}</button>
-    </div>
-  </dialog>
+  </ConfirmDialog>
 
   {#if activeRunId}
     <hr class="border-surface-200-800" />
