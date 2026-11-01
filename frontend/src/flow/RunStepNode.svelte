@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Handle, Position, type NodeProps } from "@xyflow/svelte";
+  import ProgressBar from "../ui/ProgressBar.svelte";
   import { opLabel } from "../lib/flow/ops.ts";
   import type { RunStepNodeData } from "../lib/flow/run.ts";
 
@@ -67,7 +68,7 @@
           {#each d.phases as ph, i (ph.label)}<span class={ph.state === "active" ? "font-bold" : ""}>{ph.label}{i < d.phases.length - 1 ? " ·" : ""}</span>{/each}
         </div>
       {:else if d.percent !== null}
-        <progress class="progress w-full" value={d.percent} max="100"></progress>
+        <ProgressBar percent={d.percent} label="Step progress" />
       {/if}
     {/if}
     {#each d.lines as line}<div class="opacity-80">{line}</div>{/each}
