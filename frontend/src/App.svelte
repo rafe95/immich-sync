@@ -66,12 +66,29 @@
   <Login />
 {:else}
   <div class="grid min-h-screen grid-rows-[auto_1fr]">
-    <header class="flex flex-wrap items-center justify-between gap-4 border-b border-surface-200-800 px-6 py-3">
+    <header class="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface-200-800 px-6 py-3">
       <div class="flex items-center gap-3">
         <img src="/favicon.svg" alt="" class="size-7" />
         <span class="text-lg font-semibold">Immich Sync</span>
       </div>
-      <div class="flex items-center gap-3">
+      <!-- Tabs sit beside the logo; on narrow windows they drop to their own row. -->
+      <nav aria-label="Main" class="order-last flex w-full flex-wrap gap-1 md:order-none md:w-auto">
+        {#each visibleScreens as s (s.id)}
+          <button
+            type="button"
+            class="btn btn-sm whitespace-nowrap {current === s.id ? 'preset-tonal-primary font-semibold' : 'hover:preset-tonal-surface'}"
+            aria-current={current === s.id ? "page" : undefined}
+            disabled={!s.enabled}
+            onclick={() => {
+              if (s.id !== "run") prefill = null;
+              current = s.id;
+            }}
+          >
+            {s.label}{s.enabled ? "" : " (coming soon)"}
+          </button>
+        {/each}
+      </nav>
+      <div class="ml-auto flex flex-wrap items-center gap-3">
         {#if health}
           <span class="badge {health.database ? 'preset-tonal-success' : 'preset-tonal-error'}">
             {health.database ? "Backend and database OK" : "Database unreachable"} · v{health.version}
@@ -88,39 +105,20 @@
       </div>
     </header>
 
-    <div class="grid grid-cols-1 grid-rows-[auto_1fr] md:grid-cols-[14rem_1fr] md:grid-rows-1">
-      <nav aria-label="Main" class="flex items-start gap-1 overflow-x-auto border-b border-surface-200-800 p-3 md:flex-col md:items-stretch md:border-r md:border-b-0">
-        {#each visibleScreens as s (s.id)}
-          <button
-            type="button"
-            class="btn justify-start whitespace-nowrap {current === s.id ? 'preset-filled-primary-500' : 'hover:preset-tonal-surface'}"
-            aria-current={current === s.id ? "page" : undefined}
-            disabled={!s.enabled}
-            onclick={() => {
-              if (s.id !== "run") prefill = null;
-              current = s.id;
-            }}
-          >
-            {s.label}{s.enabled ? "" : " (coming soon)"}
-          </button>
-        {/each}
-      </nav>
-
-      <main class="space-y-4 p-6">
-        {#if current === "users" && isAdmin(session.user)}
-          <Users />
-        {:else if current === "settings"}
-          <Settings />
-        {:else if current === "run"}
-          <Run bind:activeRunId {prefill} />
-        {:else if current === "history"}
-          <History bind:openId={historyRunId} onrunreal={runRealFromHistory} />
-        {:else if current === "jobs"}
-          <Jobs bind:openJobId onrun={(id) => { activeRunId = id; prefill = null; current = "run"; }} />
-        {:else}
-          <Dashboard onopenrun={(id) => { historyRunId = id; current = "history"; }} onopenjob={(id) => { openJobId = id; current = "jobs"; }} />
-        {/if}
-      </main>
-    </div>
+    <main class="space-y-4 p-6">
+      {#if current === "users" && isAdmin(session.user)}
+        <Users />
+      {:else if current === "settings"}
+        <Settings />
+      {:else if current === "run"}
+        <Run bind:activeRunId {prefill} />
+      {:else if current === "history"}
+        <History bind:openId={historyRunId} onrunreal={runRealFromHistory} />
+      {:else if current === "jobs"}
+        <Jobs bind:openJobId onrun={(id) => { activeRunId = id; prefill = null; current = "run"; }} />
+      {:else}
+        <Dashboard onopenrun={(id) => { historyRunId = id; current = "history"; }} onopenjob={(id) => { openJobId = id; current = "jobs"; }} />
+      {/if}
+    </main>
   </div>
 {/if}
