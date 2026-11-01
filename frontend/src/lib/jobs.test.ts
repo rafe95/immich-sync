@@ -18,11 +18,12 @@ test("step rules: same instance, window, lastDays, trash for move, album depende
   expect(validateJob("n", [step({ operation: "move", includeTrashed: true })]).join()).toContain("not supported for a move");
   expect(validateJob("n", [step({ includeAlbums: false, createMissingAlbums: true })]).join()).toContain("requires album sync");
   expect(validateJob("n", [step({ metadata: false, includeTags: true })]).join()).toContain("need metadata");
+  expect(validateJob("n", [step({ metadata: false, includeEdits: true })]).join()).toContain("need metadata");
   expect(validateJob(" ", [])).toHaveLength(2);
 });
 
 test("normalizeStepForm restores dependent options", () => {
-  expect(normalizeStepForm(step({ metadata: false, includeAlbums: true, includeTags: true, createMissingAlbums: true }))).toMatchObject({ includeAlbums: false, includeTags: false, createMissingAlbums: false });
+  expect(normalizeStepForm(step({ metadata: false, includeAlbums: true, includeTags: true, includeEdits: true, createMissingAlbums: true }))).toMatchObject({ includeAlbums: false, includeTags: false, includeEdits: false, createMissingAlbums: false });
   expect(normalizeStepForm(step({ includeAlbums: false, createMissingAlbums: true })).createMissingAlbums).toBe(false);
   expect(normalizeStepForm(step({ operation: "sync_metadata", metadata: false })).metadata).toBe(true);
   expect(normalizeStepForm(step({ operation: "move", includeTrashed: true })).includeTrashed).toBe(false);

@@ -109,6 +109,7 @@
     {@render toggle("Add to matching albums", step.includeAlbums, !step.metadata, (v) => onchange({ includeAlbums: v }), "By exact name, additive")}
     {@render toggle("Create albums missing on the target", step.createMissingAlbums, !step.metadata || !step.includeAlbums, (v) => onchange({ createMissingAlbums: v }))}
     {@render toggle("Sync tags", step.includeTags, !step.metadata, (v) => onchange({ includeTags: v }), "Additive")}
+    {@render toggle("Copy crop, rotate and mirror edits", step.includeEdits, !step.metadata, (v) => onchange({ includeEdits: v }), "Only to target assets with no edits; needs asset.edit permissions")}
     {@render toggle(
       "Include assets in the source's trash",
       step.includeTrashed,

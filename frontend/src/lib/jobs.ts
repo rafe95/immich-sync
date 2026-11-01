@@ -14,6 +14,7 @@ export type StepOptionsRecord = {
   includeAlbums?: boolean;
   createMissingAlbums?: boolean;
   includeTags?: boolean;
+  includeEdits?: boolean;
   includeTrashed?: boolean;
   dryRun?: boolean;
 };
@@ -60,6 +61,7 @@ export type StepForm = {
   includeAlbums: boolean;
   createMissingAlbums: boolean;
   includeTags: boolean;
+  includeEdits: boolean;
   includeTrashed: boolean;
   onFailure: OnFailure;
   onError: OnError;
@@ -71,14 +73,14 @@ const nextKey = () => `step-${++counter}`;
 export const defaultStep = (over: Partial<StepForm> = {}): StepForm =>
   ({
     key: nextKey(), operation: "copy", sourceId: "", targetId: "", rangeMode: "all", from: "", to: "", lastDays: "30", kind: "all", metadata: true,
-    includeAlbums: false, createMissingAlbums: false, includeTags: false, includeTrashed: false, onFailure: "continue", onError: "stop", ...over,
+    includeAlbums: false, createMissingAlbums: false, includeTags: false, includeEdits: false, includeTrashed: false, onFailure: "continue", onError: "stop", ...over,
   }) satisfies StepForm;
 
 /** Restores the rules the backend enforces after any edit (call after changing operation or the metadata options). */
 export function normalizeStepForm(s: StepForm): StepForm {
   const out = { ...s };
   if (out.operation === "sync_metadata") out.metadata = true;
-  if (!out.metadata) out.includeAlbums = out.createMissingAlbums = out.includeTags = false;
+  if (!out.metadata) out.includeAlbums = out.createMissingAlbums = out.includeTags = out.includeEdits = false;
   if (!out.includeAlbums) out.createMissingAlbums = false;
   if (out.operation === "move") out.includeTrashed = false;
   return out;
@@ -93,7 +95,7 @@ export function stepFromRecord(r: StepRecord): StepForm {
   return normalizeStepForm(
     defaultStep({
       ...base, operation: r.operation, sourceId: r.sourceId, targetId: r.targetId, kind: o.kind ?? "all", metadata: o.metadata ?? true,
-      includeAlbums: o.includeAlbums === true, createMissingAlbums: o.createMissingAlbums === true, includeTags: o.includeTags === true,
+      includeAlbums: o.includeAlbums === true, createMissingAlbums: o.createMissingAlbums === true, includeTags: o.includeTags === true, includeEdits: o.includeEdits === true,
       includeTrashed: o.includeTrashed === true, onFailure: r.onFailure ?? "continue", onError: r.onError ?? "stop",
     }),
   );
@@ -118,7 +120,7 @@ export function validateStep(s: StepForm, index: number): string[] {
     if (!Number.isInteger(n) || n < 1 || n > 36500) p.push(`${l}: "last N days" must be a whole number from 1 to 36500.`);
   }
   if (s.operation === "move" && s.includeTrashed) p.push(`${l}: including the source's trash is not supported for a move.`);
-  if ((s.includeAlbums || s.createMissingAlbums || s.includeTags) && !s.metadata) p.push(`${l}: albums and tags need metadata sync.`);
+  if ((s.includeAlbums || s.createMissingAlbums || s.includeTags || s.includeEdits) && !s.metadata) p.push(`${l}: albums, tags and edits need metadata sync.`);
   if (s.createMissingAlbums && !s.includeAlbums) p.push(`${l}: creating missing albums requires album sync.`);
   return p;
 }
@@ -142,6 +144,7 @@ export function buildStepBody(f: StepForm): Record<string, unknown> {
   if (s.includeAlbums) options.includeAlbums = true;
   if (s.createMissingAlbums) options.createMissingAlbums = true;
   if (s.includeTags) options.includeTags = true;
+  if (s.includeEdits) options.includeEdits = true;
   if (s.operation !== "move" && s.includeTrashed) options.includeTrashed = true;
   return { operation: s.operation, sourceId: s.sourceId, targetId: s.targetId, options, onFailure: s.onFailure, onError: s.onError };
 }
@@ -181,7 +184,7 @@ export function stepSummary(s: StepForm | StepRecord, alias: (id: string) => str
   if (f.rangeMode === "lastDays") parts.push(`last ${f.lastDays} days`);
   else if (f.rangeMode === "window") parts.push(`${f.from || "…"} to ${f.to || "…"}`);
   if (f.operation !== "sync_metadata") parts.push(f.metadata ? "metadata on" : "metadata off");
-  const extras = [f.includeAlbums && "albums", f.includeTags && "tags"].filter(Boolean);
+  const extras = [f.includeAlbums && "albums", f.includeTags && "tags", f.includeEdits && "edits"].filter(Boolean);
   if (extras.length) parts.push(`with ${extras.join(" and ")}`);
   if (f.includeTrashed) parts.push("including source trash");
   return parts.join(" · ");

@@ -351,6 +351,8 @@ describe("runStep dry run and preflight", () => {
     const target = fake();
     const result = await runStep(opts(source, target, { operation: "copy", includeTags: true }));
     expect(result.status).toBe("error");
+    const edits = await runStep(opts(source, target, { operation: "copy", includeEdits: true }));
+    expect(edits.status).toBe("error");
     const meta = await runStep(opts(source, target, { operation: "sync_metadata", metadata: false }));
     expect(meta.status).toBe("error");
   });
@@ -543,6 +545,23 @@ describe("sync_metadata permissions", () => {
     expect(tags.status).toBe("error");
     expect(tags.error).toContain("tag.");
     expect(mutating(target)).toHaveLength(0);
+
+    const edits = await runStep(opts(source, target, { operation: "sync_metadata", includeEdits: true }));
+    expect(edits.status).toBe("error");
+    expect(edits.error).toContain("asset.edit");
+    expect(mutating(target)).toHaveLength(0);
+  });
+
+  test("includeEdits copies the source's edits to a target without any through sync_metadata", async () => {
+    const crop = { action: "crop" as const, parameters: { x: 1, y: 2, width: 30, height: 40 } };
+    const targetAsset = mediaAsset("t1", content);
+    const source = fake({ assets: [mediaAsset("s1", content, { edits: [crop] })], permissions: [...readOnlySource, "asset.edit.get"] });
+    const target = fake({ assets: [targetAsset], permissions: ["user.read", "asset.read", "asset.update", "asset.edit.get", "asset.edit.create"] });
+
+    const result = await runStep(opts(source, target, { operation: "sync_metadata", includeEdits: true }));
+
+    expect(result.assets[0]).toMatchObject({ outcome: "synced" });
+    expect(targetAsset.edits).toEqual([crop]);
   });
 });
 
