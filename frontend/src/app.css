@@ -4,6 +4,17 @@
 @import "@skeletonlabs/skeleton/themes/cerberus";
 @import "@xyflow/svelte/dist/style.css";
 
+/* Tailwind's dark: variant follows the explicit choice made in the header; "system" leaves data-mode unset. */
+@custom-variant dark (&:where([data-mode=dark], [data-mode=dark] *));
+
+/* Light theme: a soft grey page with white cards and header, as in the design mocks. Dark keeps its single dark surface. */
+body {
+  background-color: light-dark(oklch(0.97 0.003 260), transparent);
+}
+.card.preset-outlined-surface-200-800 {
+  background-color: var(--color-surface-50-950);
+}
+
 .svelte-flow {
   --xy-background-color: var(--color-surface-50-950);
   --xy-background-pattern-color: var(--color-surface-300-700);
@@ -12,8 +23,14 @@
   --xy-controls-button-color: var(--color-surface-950-50);
   --xy-controls-button-border-color: var(--color-surface-300-700);
   --xy-minimap-background-color: var(--color-surface-100-900);
-  --xy-minimap-mask-background-color: color-mix(in srgb, var(--color-surface-500) 25%, transparent);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--color-surface-500) 10%, transparent);
   --xy-edge-label-background-color: var(--color-surface-100-900);
   --xy-edge-label-color: var(--color-surface-950-50);
   --xy-attribution-background-color: transparent;
+}
+
+@keyframes immich-dash {
+  to {
+    stroke-dashoffset: -12;
+  }
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import ThemeSelect from "./ThemeSelect.svelte";
   import { getHealth, type Health } from "./lib/api.ts";
   import { checkSession, logout, session } from "./lib/session.svelte.ts";
   import Dashboard from "./Dashboard.svelte";
@@ -66,7 +67,7 @@
   <Login />
 {:else}
   <div class="grid min-h-screen grid-rows-[auto_1fr]">
-    <header class="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-surface-200-800 px-6 py-3">
+    <header class="flex flex-wrap items-center gap-x-6 gap-y-2 bg-surface-50-950 border-b border-surface-200-800 px-6 py-3">
       <div class="flex items-center gap-3">
         <img src="/favicon.svg" alt="" class="size-7" />
         <span class="text-lg font-semibold">Immich Sync</span>
@@ -101,6 +102,7 @@
         {#if session.user}
           <span class="text-sm">{session.user.username} <span class="badge preset-tonal-surface">{session.user.role}</span></span>
         {/if}
+        <ThemeSelect />
         <button type="button" class="btn btn-sm preset-tonal-surface" onclick={logout}>Log out</button>
       </div>
     </header>

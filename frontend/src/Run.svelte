@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import OperationPicker from "./OperationPicker.svelte";
+  import RunSidePanels from "./RunSidePanels.svelte";
   import RunView from "./RunView.svelte";
   import { ApiError, type Instance } from "./lib/api.ts";
   import { api } from "./lib/session.svelte.ts";
@@ -98,7 +100,10 @@
 </script>
 
 <div class="space-y-4">
-  <h1 class="h3">Run</h1>
+  <div>
+    <h1 class="h3">Run</h1>
+    <p class="text-sm opacity-70">Copy, move or sync metadata between two instances, once.</p>
+  </div>
 
   {#if loading}
     <p role="status">Loading instances…</p>
@@ -108,102 +113,100 @@
   {:else if instances.length < 2}
     <p class="opacity-70">A run needs two different instances. Register them on the Dashboard first.</p>
   {:else}
-    <form class="card preset-outlined-surface-200-800 max-w-3xl space-y-4 p-4" onsubmit={(e) => { e.preventDefault(); submit(form.dryRun); }} aria-labelledby="run-form-title">
-      <h2 id="run-form-title" class="h5">One-off operation</h2>
+    <div class="flex flex-wrap items-start gap-4">
+      <form class="card preset-outlined-surface-200-800 min-w-0 flex-1 basis-[34rem] space-y-4 p-5" onsubmit={(e) => { e.preventDefault(); submit(form.dryRun); }} aria-labelledby="run-form-title">
+        <h2 id="run-form-title" class="h5">One-off operation</h2>
 
-      <fieldset class="space-y-1">
-        <legend class="label-text">Operation</legend>
-        <div class="flex flex-wrap gap-4">
-          {#each [["copy", "Copy"], ["move", "Move"], ["sync_metadata", "Sync metadata"]] as const as [value, label] (value)}
-            <label class="flex items-center gap-2"><input class="radio" type="radio" name="operation" {value} bind:group={form.operation} /> {label}</label>
-          {/each}
+        <OperationPicker bind:value={form.operation} />
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="label">
+            <span class="label-text">Source</span>
+            <select class="select" bind:value={form.sourceId} required aria-describedby="src-health">
+              <option value="" disabled>Choose…</option>
+              {#each instances as i (i.id)}<option value={i.id}>{optionLabel(i)}</option>{/each}
+            </select>
+            <span id="src-health" class="text-xs {health(source) ? 'text-warning-600-400' : 'opacity-70'}">{health(source) ? `Warning: ${health(source)}.` : "Assets are read from here."}</span>
+          </label>
+          <label class="label">
+            <span class="label-text">Target</span>
+            <select class="select" bind:value={form.targetId} required aria-describedby="tgt-health">
+              <option value="" disabled>Choose…</option>
+              {#each instances as i (i.id)}<option value={i.id}>{optionLabel(i)}</option>{/each}
+            </select>
+            <span id="tgt-health" class="text-xs {health(target) ? 'text-warning-600-400' : 'opacity-70'}">{health(target) ? `Warning: ${health(target)}.` : "Assets are written here."}</span>
+          </label>
         </div>
-        {#if isMove}
-          <p class="text-sm opacity-80">Move copies each asset, verifies it on the target, and only then sends the source asset to the source's trash. Nothing is permanently deleted.</p>
-        {/if}
-      </fieldset>
+        {#if sameInstance}<p class="text-sm text-error-500" role="alert">Source and target must be different instances.</p>{/if}
 
-      <div class="grid gap-4 sm:grid-cols-2">
-        <label class="label">
-          <span class="label-text">Source</span>
-          <select class="select" bind:value={form.sourceId} required aria-describedby="src-health">
-            <option value="" disabled>Choose…</option>
-            {#each instances as i (i.id)}<option value={i.id}>{optionLabel(i)}</option>{/each}
-          </select>
-          <span id="src-health" class="text-xs {health(source) ? 'text-warning-600-400' : 'opacity-70'}">{health(source) ? `Warning: ${health(source)}.` : "Assets are read from here."}</span>
-        </label>
-        <label class="label">
-          <span class="label-text">Target</span>
-          <select class="select" bind:value={form.targetId} required aria-describedby="tgt-health">
-            <option value="" disabled>Choose…</option>
-            {#each instances as i (i.id)}<option value={i.id}>{optionLabel(i)}</option>{/each}
-          </select>
-          <span id="tgt-health" class="text-xs {health(target) ? 'text-warning-600-400' : 'opacity-70'}">{health(target) ? `Warning: ${health(target)}.` : "Assets are written here."}</span>
-        </label>
-      </div>
-      {#if sameInstance}<p class="text-sm text-error-500" role="alert">Source and target must be different instances.</p>{/if}
-
-      <fieldset class="space-y-2">
-        <legend class="label-text">Date taken</legend>
-        <div class="flex flex-wrap gap-4">
-          <label class="flex items-center gap-2"><input class="radio" type="radio" name="range" value="all" bind:group={form.rangeMode} /> All assets</label>
-          <label class="flex items-center gap-2"><input class="radio" type="radio" name="range" value="window" bind:group={form.rangeMode} /> Date window</label>
-        </div>
-        {#if form.rangeMode === "window"}
-          <div class="grid gap-4 sm:grid-cols-2">
-            <label class="label"><span class="label-text">From (optional)</span><input class="input" type="date" bind:value={form.from} /></label>
-            <label class="label"><span class="label-text">To (optional)</span><input class="input" type="date" bind:value={form.to} /></label>
+        <fieldset class="space-y-2">
+          <legend class="label-text">Date taken</legend>
+          <div class="flex flex-wrap gap-4">
+            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range" value="all" bind:group={form.rangeMode} /> All assets</label>
+            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range" value="window" bind:group={form.rangeMode} /> Date window</label>
           </div>
-          <p class="text-sm opacity-70">Set one or both. Dates are date taken, in UTC, and the to date is included in full.</p>
+          {#if form.rangeMode === "window"}
+            <div class="grid gap-4 sm:grid-cols-2">
+              <label class="label"><span class="label-text">From (optional)</span><input class="input" type="date" bind:value={form.from} /></label>
+              <label class="label"><span class="label-text">To (optional)</span><input class="input" type="date" bind:value={form.to} /></label>
+            </div>
+            <p class="text-sm opacity-70">Set one or both. Dates are date taken, in UTC, and the to date is included in full.</p>
+          {/if}
+        </fieldset>
+
+        <label class="label">
+          <span class="label-text">Kind</span>
+          <select class="select" bind:value={form.kind}>
+            <option value="all">Photos and videos</option>
+            <option value="photos">Photos only</option>
+            <option value="videos">Videos only</option>
+          </select>
+        </label>
+
+        <label class="flex items-start gap-3">
+          <input class="checkbox mt-1" type="checkbox" bind:checked={form.metadata} disabled={form.operation === "sync_metadata"} />
+          <span>Sync metadata{form.operation === "sync_metadata" ? " (always on for this operation)" : ""}</span>
+        </label>
+
+        {#if form.operation !== "move"}
+          <label class="flex items-start gap-3">
+            <input class="checkbox mt-1" type="checkbox" bind:checked={form.includeTrashed} />
+            <span>
+              Include assets in the source's trash
+              <span class="block text-sm opacity-70">Off by default. This only affects the source: an asset found only in the target's trash is still skipped, never uploaded again.</span>
+            </span>
+          </label>
         {/if}
-      </fieldset>
 
-      <label class="label max-w-xs">
-        <span class="label-text">Kind</span>
-        <select class="select" bind:value={form.kind}>
-          <option value="all">Photos and videos</option>
-          <option value="photos">Photos only</option>
-          <option value="videos">Videos only</option>
-        </select>
-      </label>
-
-      <label class="flex items-center gap-2">
-        <input class="checkbox" type="checkbox" bind:checked={form.metadata} disabled={form.operation === "sync_metadata"} />
-        <span>Sync metadata{form.operation === "sync_metadata" ? " (always on for this operation)" : ""}</span>
-      </label>
-
-      {#if form.operation !== "move"}
-        <label class="flex items-start gap-2">
-          <input class="checkbox mt-1" type="checkbox" bind:checked={form.includeTrashed} />
+        <label class="flex items-start gap-3 rounded-container p-3 {form.dryRun ? 'preset-tonal-success' : 'preset-tonal-warning'}">
+          <input class="checkbox mt-1" type="checkbox" bind:checked={form.dryRun} />
           <span>
-            Include assets in the source's trash
-            <span class="block text-sm opacity-70">Off by default. This only affects the source: an asset found only in the target's trash is still skipped, never uploaded again.</span>
+            <strong>Dry run</strong>: inspect and report only. {form.dryRun ? "No changes are made on either server." : "Off: this run will change the target" + (isMove ? " and trash source assets after verification." : ".")}
           </span>
         </label>
-      {/if}
 
-      <label class="flex items-start gap-2 rounded-container p-3 {form.dryRun ? 'preset-tonal-success' : 'preset-tonal-warning'}">
-        <input class="checkbox mt-1" type="checkbox" bind:checked={form.dryRun} />
-        <span>
-          <strong>Dry run</strong>: inspect and report only. {form.dryRun ? "No changes are made on either server." : "Off: this run will change the target" + (isMove ? " and trash source assets after verification." : ".")}
-        </span>
-      </label>
+        <p class="bg-surface-100-900 rounded-container p-3 text-sm" aria-live="polite"><strong>Summary:</strong> {summary}</p>
 
-      <p class="text-sm" aria-live="polite"><strong>Summary:</strong> {summary}</p>
+        {#if errors.length}
+          <ul class="list-disc pl-5 text-sm text-error-500" role="alert">
+            {#each errors as p (p)}<li>{p}</li>{/each}
+          </ul>
+        {/if}
 
-      {#if errors.length}
-        <ul class="list-disc pl-5 text-sm text-error-500" role="alert">
-          {#each errors as p (p)}<li>{p}</li>{/each}
-        </ul>
-      {/if}
+        <div class="flex gap-2">
+          <button class="btn {isMove && !form.dryRun ? 'preset-filled-error-500' : 'preset-filled-primary-500'}" type="submit" disabled={submitting || sameInstance}>
+            {submitting ? "Starting…" : form.dryRun ? "Start dry run" : isMove ? "Review and start move…" : "Start run"}
+          </button>
+        </div>
+      </form>
 
-      <button class="btn preset-filled-primary-500" type="submit" disabled={submitting || sameInstance}>
-        {submitting ? "Starting…" : form.dryRun ? "Start dry run" : isMove ? "Review and start move…" : "Start run"}
-      </button>
-    </form>
+      <div class="flex min-w-0 flex-1 basis-72 flex-col gap-4 lg:max-w-sm">
+        <RunSidePanels />
+      </div>
+    </div>
   {/if}
 
-  <dialog bind:this={confirmDialog} class="card preset-filled-surface-100-900 m-auto max-w-lg space-y-3 p-5 backdrop:bg-black/50" aria-labelledby="confirm-title">
+  <dialog bind:this={confirmDialog} class="card preset-filled-surface-100-900 m-auto max-w-lg space-y-3 p-5 shadow-xl backdrop:bg-black/50" aria-labelledby="confirm-title">
     <h2 id="confirm-title" class="h5">Move assets from {source?.alias ?? "the source"}?</h2>
     <p>
       Each asset is copied to <strong>{target?.alias}</strong> and checked there first. Only after it is verified (and its metadata synced, if enabled) is it sent to the

@@ -4,8 +4,9 @@
   import RunDiagram from "./flow/RunDiagram.svelte";
   import RunStepDetail from "./flow/RunStepDetail.svelte";
   import { createRunEvents, type RunEvents } from "./lib/runEvents.svelte.ts";
+  import { stepProgressLabel, triggerLabel } from "./lib/flow/run.ts";
   import { api } from "./lib/session.svelte.ts";
-  import { formFromRun, isTerminal, logAsJson, logAsText, operationLabel, statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
+  import { formatDuration, formFromRun, isTerminal, logAsJson, logAsText, operationLabel, statusClass, statusLabel, type Run, type RunStatus } from "./lib/runs.ts";
 
   /** A run's header, console, cancel, log download and "Run for real". Shared by the Run and History screens. */
   let { runId, onrunreal }: { runId: string; onrunreal?: (run: Run) => void } = $props();
@@ -22,6 +23,15 @@
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "-");
   const finished = $derived(run ? isTerminal(run.status) : false);
   const canRunReal = $derived(!!run && finished && run.dryRun && run.status !== "failed" && formFromRun(run) !== null);
+
+  const stepLabel = $derived(run ? stepProgressLabel(run) : null);
+  // Ticks once a second while the run is active so the elapsed time moves.
+  let now = $state(Date.now());
+  const elapsed = $derived.by(() => {
+    if (!run?.startedAt) return null;
+    const end = run.finishedAt ? Date.parse(run.finishedAt) : now;
+    return formatDuration(end - Date.parse(run.startedAt));
+  });
 
   async function load() {
     try {
@@ -50,7 +60,13 @@
     const t = setInterval(() => {
       if (run && !isTerminal(run.status)) void load();
     }, 3000);
-    return () => clearInterval(t);
+    const tick = setInterval(() => {
+      if (run && !isTerminal(run.status)) now = Date.now();
+    }, 1000);
+    return () => {
+      clearInterval(t);
+      clearInterval(tick);
+    };
   });
 
   async function cancel() {
@@ -112,7 +128,7 @@
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex flex-wrap items-center gap-3">
         <h2 class="h4">{run.jobName}</h2>
-        <span class="badge {statusClass(run.status)}" role="status" aria-live="polite">{statusLabel(run.status)}{run.dryRun ? " · dry run" : ""}</span>
+        <span class="badge {statusClass(run.status)} capitalize" role="status" aria-live="polite">{statusLabel(run.status)}{stepLabel ? ` · ${stepLabel}` : ""}{run.dryRun ? " · dry run" : ""}</span>
       </div>
       <div class="flex flex-wrap gap-2">
         {#if !finished}
@@ -126,8 +142,11 @@
       </div>
     </div>
     {#if notice}<p class="text-sm" role="status">{notice}</p>{/if}
-    <p class="text-xs opacity-70">
-      Created {fmt(run.createdAt)} · started {fmt(run.startedAt)} · finished {fmt(run.finishedAt)} · {run.trigger}
+    <p class="text-sm opacity-70" data-testid="run-subtitle">
+      {triggerLabel(run.trigger)} · {run.startedAt ? `started ${fmt(run.startedAt)}` : `created ${fmt(run.createdAt)}, not started`}{#if elapsed}
+        · {elapsed} {finished ? "total" : "elapsed"}{/if}{#if run.finishedAt}
+        · finished {fmt(run.finishedAt)}{/if}{#if !finished}
+        · keeps running if you close this tab{/if}
     </p>
   {/if}
 
@@ -139,7 +158,7 @@
     <div class="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
       <div class="space-y-4">
         {#if events && run.settings.steps.length}
-          <RunStepDetail progress={events.state} bind:selected={stepFilter} />
+          <RunStepDetail progress={events.state} steps={run.settings.steps} bind:selected={stepFilter} />
         {/if}
         <div class="card preset-outlined-surface-200-800 space-y-2 p-3">
           <h3 class="h6">Settings</h3>

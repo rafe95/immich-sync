@@ -27,6 +27,7 @@
 
   const optionLabel = (i: Instance) => `${i.alias}${i.lastCheck === null ? " · not checked" : i.lastCheck.ok ? " · OK" : " · check failed"}`;
   const isMove = $derived(step.operation === "move");
+  const aliasOf = (id: string) => instances.find((i) => i.id === id)?.alias ?? "…";
 </script>
 
 {#snippet toggle(label: string, checked: boolean, disabled: boolean, set: (v: boolean) => void, note?: string)}
@@ -37,14 +38,18 @@
   </Switch>
 {/snippet}
 
-<aside class="card preset-outlined-surface-200-800 space-y-4 p-4" aria-label="Step {index + 1} settings">
-  <div class="flex flex-wrap items-center justify-between gap-2">
-    <h3 class="font-semibold">Step {index + 1}</h3>
+<aside class="card preset-outlined-surface-200-800 space-y-4 p-0" aria-label="Step {index + 1} settings">
+  <div class="flex flex-wrap items-start justify-between gap-2 border-b border-surface-200-800 p-4">
+    <div class="min-w-0">
+      <div class="text-xs font-semibold tracking-wide uppercase opacity-70">Step {index + 1}</div>
+      <h3 class="text-lg font-bold">{OP_LABEL[step.operation]} {aliasOf(step.sourceId)} → {aliasOf(step.targetId)}</h3>
+    </div>
     <div class="flex gap-1">
       <button type="button" class="btn btn-sm preset-tonal-surface" disabled={!canDuplicate} onclick={onduplicate}>Duplicate</button>
       <button type="button" class="btn btn-sm preset-tonal-error" disabled={count === 1} onclick={onremove}>Remove</button>
     </div>
   </div>
+  <div class="space-y-4 px-4 pb-4">
 
   <div class="space-y-1">
     <span class="label-text">Operation</span>
@@ -59,10 +64,10 @@
         {/each}
       </SegmentedControl.Control>
     </SegmentedControl>
-    {#if isMove}<p class="text-sm opacity-80">Move verifies each asset on the target, then sends the source asset to the source's trash. Nothing is permanently deleted.</p>{/if}
+    {#if isMove}<p class="rounded-container bg-warning-100-900 p-3 text-sm text-warning-900-100">Move verifies each asset on the target, then sends the source asset to the source's trash. Nothing is permanently deleted.</p>{/if}
   </div>
 
-  <div class="grid gap-3">
+  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
     <label class="label"><span class="label-text">Source</span>
       <select class="select" value={step.sourceId} onchange={(e) => onchange({ sourceId: e.currentTarget.value })}>
         <option value="" disabled>Choose…</option>
@@ -135,6 +140,7 @@
   </div>
 
   {#if problems.length}
-    <ul class="list-disc pl-5 text-sm text-warning-700-300">{#each problems as p (p)}<li>{p}</li>{/each}</ul>
+    <ul class="list-disc rounded-container bg-warning-100-900 py-2 pr-3 pl-7 text-sm text-warning-900-100">{#each problems as p (p)}<li>{p}</li>{/each}</ul>
   {/if}
+  </div>
 </aside>

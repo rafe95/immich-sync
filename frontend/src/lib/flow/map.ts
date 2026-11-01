@@ -83,6 +83,26 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
     });
   }
 
+  // A running ad-hoc run (no saved job) draws a temporary line for its current step.
+  for (const a of input.active) {
+    if (a.queued || input.jobs.some((j) => j.id === a.run.settings.jobId)) continue;
+    const current = a.step ?? a.run.steps.find((s) => s.status === "running")?.position ?? a.run.steps[0]?.position ?? 1;
+    const step = a.run.settings.steps.find((s) => s.position === current);
+    if (!step) continue;
+    const source = endpoint(step.source.id, known);
+    const target = endpoint(step.target.id, known);
+    if (!nodes.has(source) || !nodes.has(target)) continue;
+    const pair = `${source}>${target}`;
+    const lane = lanes.get(pair) ?? 0;
+    lanes.set(pair, lane + 1);
+    const label = `${a.run.jobName} · ${a.percent === null ? "running" : `${Math.round(a.percent)}%`}`;
+    edges.push({ id: `run:${a.run.id}:${current}`, type: "label", source, target, data: { label, tone: opTone(step.operation), style: "running", runId: a.run.id, lane } as LabelEdgeData });
+    const src = nodes.get(source)!;
+    const dst = nodes.get(target)!;
+    dst.data.activity = { kind: "lock", job: a.run.jobName };
+    if (!src.data.activity) src.data.activity = { kind: "reading", job: a.run.jobName };
+  }
+
   for (const a of input.active) {
     const job = input.jobs.find((j) => j.id === a.run.settings.jobId);
     if (!job) continue;

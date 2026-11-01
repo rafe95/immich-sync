@@ -1,16 +1,15 @@
 <script lang="ts">
   import type { Edge, Node, NodeTypes } from "@xyflow/svelte";
   import FlowCanvas from "./FlowCanvas.svelte";
-  import InstanceNode from "./InstanceNode.svelte";
   import PreflightNode from "./PreflightNode.svelte";
-  import StepNode from "./StepNode.svelte";
+  import RunStepNode from "./RunStepNode.svelte";
   import { buildRunGraph } from "../lib/flow/run.ts";
   import type { ConsoleState, Run } from "../lib/runs.ts";
 
   /** The run as a row of step boxes. Clicking a step selects it (the parent filters the console to it). */
   let { run, progress, selected = $bindable(null) }: { run: Run; progress: ConsoleState; selected: number | null } = $props();
 
-  const nodeTypes = { instance: InstanceNode, step: StepNode, preflight: PreflightNode } as unknown as NodeTypes;
+  const nodeTypes = { step: RunStepNode, preflight: PreflightNode } as unknown as NodeTypes;
   let nodes = $state.raw<Node[]>([]);
   let edges = $state.raw<Edge[]>([]);
 
@@ -27,6 +26,6 @@
   }
 </script>
 
-<div class="h-64">
+<div class="h-72">
   <FlowCanvas bind:nodes bind:edges {nodeTypes} onnodeclick={pick} />
 </div>

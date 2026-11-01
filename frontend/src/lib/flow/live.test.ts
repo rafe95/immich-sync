@@ -112,3 +112,25 @@ describe("countsText", () => {
     expect(countsText({})).toBe("No assets processed yet");
   });
 });
+
+import { agoText, liveTiles } from "./live.ts";
+
+describe("agoText", () => {
+  const now = Date.parse("2026-11-01T12:00:00Z");
+  test("units", () => {
+    expect(agoText("2026-11-01T11:59:40Z", now)).toBe("just now");
+    expect(agoText("2026-11-01T11:56:00Z", now)).toBe("4 min ago");
+    expect(agoText("2026-11-01T09:00:00Z", now)).toBe("3 h ago");
+    expect(agoText("2026-10-30T12:00:00Z", now)).toBe("2 d ago");
+    expect(agoText("not a date", now)).toBe("not a date");
+  });
+});
+
+describe("liveTiles", () => {
+  test("sums done outcomes and marks failures", () => {
+    const t = liveTiles({ copied: 3, moved: 1, skipped: 5, "in-target-trash": 2, failed: 1 });
+    expect(t.map((x) => x.value)).toEqual([4, 5, 2, 1]);
+    expect(t[3]!.tone).toBe("error");
+    expect(liveTiles({})[3]!.tone).toBe("plain");
+  });
+});
