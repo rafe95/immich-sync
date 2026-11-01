@@ -35,18 +35,22 @@
   }
 </script>
 
-<aside class="card preset-outlined-surface-200-800 space-y-4 p-4" aria-label={instance ? `Instance ${instance.alias}` : "Add instance"}>
+<aside class="card preset-outlined-surface-200-800 bg-surface-50-950 space-y-4 p-4" aria-label={instance ? `Instance ${instance.alias}` : "Add instance"}>
   <div class="flex items-start justify-between gap-2">
-    <h3 class="h6">{instance ? instance.alias : "Add instance"}</h3>
-    <button type="button" class="btn btn-sm preset-tonal-surface" onclick={onclose}>Close</button>
+    <div class="min-w-0">
+      <div class="text-[11px] font-semibold tracking-wide uppercase opacity-60">{instance ? "Selected instance" : "New instance"}</div>
+      <h3 class="h5 break-all">{instance ? instance.alias : "Add instance"}</h3>
+      {#if instance}<div class="text-xs opacity-70">{uses.length === 0 ? "Not used by any job" : `Used by ${uses.length} ${uses.length === 1 ? "job" : "jobs"}`}</div>{/if}
+    </div>
+    <button type="button" class="btn btn-sm preset-tonal-surface" aria-label="Close panel" onclick={onclose}>×</button>
   </div>
 
   {#if instance}
-    <section class="space-y-1 text-sm" aria-label="Jobs using this instance">
+    <section class="space-y-1 border-t border-surface-200-800 pt-3 text-sm" aria-label="Jobs using this instance">
       {#if uses.length === 0}
         <p class="opacity-70">No job uses this instance.</p>
       {:else}
-        <p class="opacity-70">Used by</p>
+        <h4 class="text-[11px] font-semibold tracking-wide uppercase opacity-60">Jobs using it</h4>
         <ul class="list-disc pl-5">
           {#each uses as u (u.job.id)}
             <li>{u.job.name} ({u.asSource && u.asTarget ? "source and target" : u.asSource ? "source" : "target"})</li>
@@ -55,7 +59,7 @@
       {/if}
     </section>
 
-    <section class="space-y-2" aria-label="Connection check">
+    <section class="space-y-2 border-t border-surface-200-800 pt-3" aria-label="Connection check">
       <div class="flex items-center justify-between gap-2">
         <h4 class="font-semibold">Connection check</h4>
         <button type="button" class="btn btn-sm preset-tonal-primary" disabled={checking} onclick={checkNow}>{checking ? "Checking…" : "Check now"}</button>

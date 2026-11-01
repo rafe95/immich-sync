@@ -67,18 +67,18 @@
   {:else if data}
     {@const cards = summaryCards(data)}
     <section aria-label="Summary" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <div class="card preset-outlined-surface-200-800 p-4">
-        <div class="text-xs opacity-70">Instances</div>
-        <div class="mt-1 text-2xl font-bold">
+      <div class="card preset-outlined-surface-200-800 bg-surface-50-950 px-4 py-3.5">
+        <div class="text-xs font-medium opacity-70">Instances</div>
+        <div class="mt-1 text-[22px] font-bold">
           {cards.instances.total}
           {#if cards.instances.attention > 0}
             <span class="text-sm font-medium text-warning-700-300">· {cards.instances.attention} {cards.instances.attention === 1 ? "needs" : "need"} attention</span>
           {/if}
         </div>
       </div>
-      <div class="card preset-outlined-surface-200-800 p-4">
-        <div class="text-xs opacity-70">Running now</div>
-        <div class="mt-1 text-2xl font-bold">
+      <div class="card preset-outlined-surface-200-800 bg-surface-50-950 px-4 py-3.5">
+        <div class="text-xs font-medium opacity-70">Running now</div>
+        <div class="mt-1 text-[22px] font-bold">
           {cards.running.count}
           {#if cards.running.first}
             {@const first = cards.running.first}
@@ -91,38 +91,37 @@
           {/if}
         </div>
       </div>
-      <div class="card preset-outlined-surface-200-800 p-4">
-        <div class="text-xs opacity-70">Next scheduled</div>
+      <div class="card preset-outlined-surface-200-800 bg-surface-50-950 px-4 py-3.5">
+        <div class="text-xs font-medium opacity-70">Next scheduled</div>
         {#if cards.next}
-          <div class="mt-1 text-2xl font-bold">{new Date(cards.next.nextRun).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+          <div class="mt-1 text-[22px] font-bold">{new Date(cards.next.nextRun).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
           <div class="truncate text-sm opacity-80" title={cards.next.jobName}>{new Date(cards.next.nextRun).toLocaleDateString()} · {cards.next.jobName}</div>
         {:else}
-          <div class="mt-1 text-2xl font-bold opacity-70">None</div>
+          <div class="mt-1 text-[22px] font-bold opacity-70">None</div>
           <div class="text-sm opacity-80">No enabled schedules</div>
         {/if}
       </div>
-      <div class="card preset-outlined-surface-200-800 p-4">
-        <div class="text-xs opacity-70">Last 7 days</div>
-        <div class="mt-1 text-2xl font-bold">
+      <div class="card preset-outlined-surface-200-800 bg-surface-50-950 px-4 py-3.5">
+        <div class="text-xs font-medium opacity-70">Last 7 days</div>
+        <div class="mt-1 text-[22px] font-bold">
           {cards.week.runs} {cards.week.runs === 1 ? "run" : "runs"}
           {#if cards.week.failed > 0}<span class="text-sm font-medium text-error-600-400">· {cards.week.failed} with failures</span>{/if}
         </div>
       </div>
     </section>
 
-    <section aria-labelledby="d-map" class="space-y-2">
-      <h2 id="d-map" class="h5">Instances</h2>
+    <section aria-label="Instance map and details">
       {#if map}
         <InstanceMap {map} {onopenrun} {onopenjob} onchanged={load} />
       {/if}
     </section>
 
     <section aria-labelledby="d-next" class="space-y-2">
-      <h2 id="d-next" class="h5">Next scheduled runs</h2>
+      <h2 id="d-next" class="text-base font-semibold">Next scheduled runs</h2>
       {#if data.nextScheduled.length === 0}
         <p class="text-sm opacity-70">No enabled schedules.</p>
       {:else}
-        <div class="table-wrap">
+        <div class="table-wrap overflow-hidden rounded-container border border-surface-200-800 bg-surface-50-950">
           <table class="table">
             <caption class="sr-only">Upcoming scheduled runs</caption>
             <thead><tr><th>Job</th><th>Next run (schedule time zone)</th><th>Next run (your time)</th></tr></thead>
@@ -141,11 +140,11 @@
     </section>
 
     <section aria-labelledby="d-recent" class="space-y-2">
-      <h2 id="d-recent" class="h5">Recent runs</h2>
+      <h2 id="d-recent" class="text-base font-semibold">Recent runs</h2>
       {#if data.recentRuns.length === 0}
         <p class="text-sm opacity-70">No runs yet.</p>
       {:else}
-        <div class="table-wrap">
+        <div class="table-wrap overflow-hidden rounded-container border border-surface-200-800 bg-surface-50-950">
           <table class="table">
             <caption class="sr-only">The last runs, newest first</caption>
             <thead><tr><th>Started</th><th>Run</th><th>Status</th><th>Finished</th></tr></thead>
