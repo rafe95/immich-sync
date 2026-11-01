@@ -4,6 +4,9 @@
 @import "@skeletonlabs/skeleton/themes/cerberus";
 @import "@xyflow/svelte/dist/style.css";
 
+/* Tailwind's dark: variant follows the explicit choice made in the header; "system" leaves data-mode unset. */
+@custom-variant dark (&:where([data-mode=dark], [data-mode=dark] *));
+
 .svelte-flow {
   --xy-background-color: var(--color-surface-50-950);
   --xy-background-pattern-color: var(--color-surface-300-700);

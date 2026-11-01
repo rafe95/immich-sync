@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import ThemeSelect from "./ThemeSelect.svelte";
   import { getHealth, type Health } from "./lib/api.ts";
   import { checkSession, logout, session } from "./lib/session.svelte.ts";
   import Dashboard from "./Dashboard.svelte";
@@ -101,6 +102,7 @@
         {#if session.user}
           <span class="text-sm">{session.user.username} <span class="badge preset-tonal-surface">{session.user.role}</span></span>
         {/if}
+        <ThemeSelect />
         <button type="button" class="btn btn-sm preset-tonal-surface" onclick={logout}>Log out</button>
       </div>
     </header>

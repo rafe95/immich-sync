@@ -29,7 +29,7 @@ test("steps stack vertically after the schedule, add node last", () => {
   const steps = [step(), step()];
   const { nodes } = build(steps, sched(), steps[1]!.key);
   expect(nodes.map((n) => n.id)).toEqual(["schedule", steps[0]!.key, steps[1]!.key, "add"]);
-  expect(nodes.map((n) => n.position.y)).toEqual([0, 170, 340, 510]);
+  expect(nodes.map((n) => n.position.y)).toEqual([0, 200, 400, 600]);
   expect(nodes.find((n) => n.id === steps[1]!.key)!.selected).toBe(true);
 });
 
@@ -71,6 +71,6 @@ test("dropIndex rounds to the nearest gap and clamps", () => {
 
 test("reorderByY moves step 0 below step 1", () => {
   const steps = [step(), step()];
-  expect(reorderByY(steps, steps[0]!.key, 170).map((s) => s.key)).toEqual([steps[1]!.key, steps[0]!.key]);
-  expect(reorderByY(steps, "missing", 170).map((s) => s.key)).toEqual(steps.map((s) => s.key));
+  expect(reorderByY(steps, steps[0]!.key, 200).map((s) => s.key)).toEqual([steps[1]!.key, steps[0]!.key]);
+  expect(reorderByY(steps, "missing", 200).map((s) => s.key)).toEqual(steps.map((s) => s.key));
 });

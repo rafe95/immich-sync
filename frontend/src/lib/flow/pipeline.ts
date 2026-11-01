@@ -4,7 +4,7 @@ import type { Instance } from "../api.ts";
 import { moveItem, needsMoveConfirmation, scheduleSummary, validateStep, type ScheduleRecord, type StepForm } from "../jobs.ts";
 import type { LabelEdgeData, StepNodeData } from "./ops.ts";
 
-export const STEP_GAP = 170;
+export const STEP_GAP = 200;
 export const PIPELINE_X = 0;
 export const SCHEDULE_ID = "schedule";
 export const ADD_ID = "add";
