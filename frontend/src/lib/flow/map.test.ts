@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { Instance } from "../api.ts";
 import type { JobRecord, ScheduleRecord, StepRecord } from "../jobs.ts";
 import type { Run } from "../runs.ts";
-import { autoLayout, buildMap, formatWhen, loadLayout, mergeLayout, saveLayout, type MapInput } from "./map.ts";
+import { ADD_INSTANCE_NODE_ID, addInstanceNode, autoLayout, buildMap, COLUMN_GAP, formatWhen, loadLayout, mergeLayout, placeholderPosition, ROW_GAP, saveLayout, type MapInput } from "./map.ts";
 
 const inst = (id: string, over: Partial<Instance> = {}): Instance => ({
   id, alias: id, apiUrl: `http://${id}/api`, note: null, isDefault: false, lastCheck: null, lastCheckedAt: null, createdAt: "", updatedAt: "", ...over,
@@ -117,4 +117,38 @@ test("layout round-trips through storage and ignores junk", () => {
   expect(loadLayout()).toEqual({ a: { x: 1, y: 2 } });
   store.set("immich-sync.map-layout.v1", "not json");
   expect(loadLayout()).toBeNull();
+});
+
+test("the add-instance placeholder is a fixed 'add' node", () => {
+  const n = addInstanceNode();
+  expect(n).toMatchObject({ id: ADD_INSTANCE_NODE_ID, type: "add", draggable: false });
+  expect(buildMap(input()).nodes.map((x) => x.id)).not.toContain(ADD_INSTANCE_NODE_ID);
+});
+
+test("the placeholder goes below the lowest node, at the left-most x, so it never overlaps a moved node", () => {
+  expect(placeholderPosition([])).toEqual({ x: 0, y: 0 });
+  expect(placeholderPosition([{ x: 300, y: 40 }, { x: 120, y: 500 }, { x: 640, y: 200 }])).toEqual({ x: 120, y: 500 + ROW_GAP });
+});
+
+test("edges between the same pair of instances get separate lanes, across steps and jobs", () => {
+  const { edges } = buildMap(input({
+    instances: [inst("a"), inst("b"), inst("c")],
+    jobs: [job([step("a", "b"), step("a", "b"), step("a", "c")], null, { id: "j1" }), job([step("a", "b")], null, { id: "j2" })],
+  }));
+  expect(edges.map((e) => [e.id, e.data!.lane])).toEqual([["j1:1", 0], ["j1:2", 1], ["j1:3", 0], ["j2:1", 2]]);
+});
+
+test("a live step overrides the run record's running step, so the percentage lands on the right line", () => {
+  const j = job([step("a", "b"), step("a", "b")]);
+  const twoSteps = run({ steps: [
+    { position: 1, status: "running", summary: null, startedAt: null, finishedAt: null },
+    { position: 2, status: "pending", summary: null, startedAt: null, finishedAt: null },
+  ] });
+  const labels = (stepOverride?: number | null) =>
+    buildMap(input({ jobs: [j], active: [{ run: twoSteps, percent: 63, queued: false, step: stepOverride }] })).edges.map((e) => e.data!.label);
+  expect(labels()).toEqual(["Nightly · 63%", "Nightly · not scheduled"]);
+  expect(labels(2)).toEqual(["Nightly · not scheduled", "Nightly · 63%"]);
+  // a run record fetched during preflight (no step running yet) still shows the percentage on the live step
+  const preflight = run({ steps: twoSteps.steps.map((s) => ({ ...s, status: "pending" })) });
+  expect(buildMap(input({ jobs: [j], active: [{ run: preflight, percent: 20, queued: false, step: 1 }] })).edges.map((e) => e.data!.label)).toEqual(["Nightly · 20%", "Nightly · not scheduled"]);
 });

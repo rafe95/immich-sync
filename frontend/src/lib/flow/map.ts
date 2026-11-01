@@ -10,7 +10,7 @@ export type MapInput = {
   instances: Instance[];
   jobs: JobRecord[];
   lastResults: Record<string, { status: RunStatus; finishedAt: string | null } | null>;
-  active: Array<{ run: Run; percent: number | null; queued: boolean }>;
+  active: Array<{ run: Run; percent: number | null; queued: boolean; /** The step that is live now when known from the event stream; the run record may be older. */ step?: number | null }>;
 };
 export type Position = { x: number; y: number };
 export type Layout = Record<string, Position>;
@@ -38,7 +38,7 @@ function instanceData(i: Instance): InstanceNodeData {
 function edgeLabel(job: JobRecord, step: StepRecord, position: number, input: MapInput): Pick<LabelEdgeData, "label" | "style"> {
   const active = input.active.find((a) => a.run.settings.jobId === job.id);
   if (active && !active.queued) {
-    const current = active.run.steps.find((s) => s.status === "running")?.position ?? active.run.steps[0]?.position ?? 1;
+    const current = active.step ?? active.run.steps.find((s) => s.status === "running")?.position ?? active.run.steps[0]?.position ?? 1;
     if (current === position) return { label: `${job.name} · ${active.percent === null ? "running" : `${Math.round(active.percent)}%`}`, style: "running" };
   }
   if (active?.queued && position === 1) return { label: `${job.name} · waiting for lock`, style: "muted" };
@@ -60,6 +60,7 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
   for (const i of input.instances) nodes.set(i.id, { id: i.id, type: "instance", position: { x: 0, y: 0 }, data: instanceData(i) });
 
   const edges: Edge<LabelEdgeData>[] = [];
+  const lanes = new Map<string, number>();
   for (const job of input.jobs) {
     job.steps.forEach((step, idx) => {
       const position = idx + 1;
@@ -75,7 +76,10 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
         }
       }
       const { label, style } = edgeLabel(job, step, position, input);
-      edges.push({ id: `${job.id}:${position}`, type: "label", source, target, data: { label, tone: opTone(step.operation), style, jobId: job.id } as LabelEdgeData });
+      const pair = `${source}>${target}`;
+      const lane = lanes.get(pair) ?? 0;
+      lanes.set(pair, lane + 1);
+      edges.push({ id: `${job.id}:${position}`, type: "label", source, target, data: { label, tone: opTone(step.operation), style, jobId: job.id, lane } as LabelEdgeData });
     });
   }
 
@@ -92,7 +96,7 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
       }
       continue;
     }
-    const current = a.run.steps.find((s) => s.status === "running")?.position ?? a.run.steps[0]?.position ?? 1;
+    const current = a.step ?? a.run.steps.find((s) => s.status === "running")?.position ?? a.run.steps[0]?.position ?? 1;
     const step = job.steps[current - 1];
     if (!step) continue;
     const src = nodes.get(endpoint(step.sourceId, known));
@@ -103,6 +107,15 @@ export function buildMap(input: MapInput): { nodes: Node<InstanceNodeData>[]; ed
 
   return { nodes: [...nodes.values()], edges };
 }
+
+export const ADD_INSTANCE_NODE_ID = "add-instance";
+
+/** The dashed "Add instance" box. It is never dragged or saved; see `placeholderPosition`. */
+export const addInstanceNode = (): Node => ({ id: ADD_INSTANCE_NODE_ID, type: "add", position: { x: 0, y: 0 }, draggable: false, selectable: false, data: {} });
+
+/** Below the lowest node and in line with the left-most one, wherever the user has moved the others. */
+export const placeholderPosition = (positions: readonly Position[]): Position =>
+  positions.length ? { x: Math.min(...positions.map((p) => p.x)), y: Math.max(...positions.map((p) => p.y)) + ROW_GAP } : { x: 0, y: 0 };
 
 /** Columns: only-source 0, both 1, only-target 2, unconnected 0 below the rest. */
 export function autoLayout(nodes: Node[], edges: Edge[]): Layout {

@@ -4,7 +4,9 @@
 
   let { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected }: EdgeProps = $props();
   const d = $derived(data as unknown as LabelEdgeData);
-  const path = $derived(getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }));
+  const LANE_GAP = 18;
+  const shift = $derived((d.lane ?? 0) * LANE_GAP);
+  const path = $derived(getBezierPath({ sourceX, sourceY: sourceY + shift, targetX, targetY: targetY + shift, sourcePosition, targetPosition }));
   const stroke = { primary: "var(--color-primary-500)", warning: "var(--color-warning-500)", tertiary: "var(--color-tertiary-500)", neutral: "var(--color-surface-500)" };
   const badge = { primary: "preset-tonal-primary", warning: "preset-tonal-warning", tertiary: "preset-tonal-tertiary", neutral: "preset-tonal-surface" };
   const dash = $derived(d.style === "muted" ? "4 4" : d.style === "running" ? "8 4" : undefined);
