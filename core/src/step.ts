@@ -561,6 +561,7 @@ async function runSyncMetadata(options: StepOptions, live: Live): Promise<Engine
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.range ? { range: options.range } : {}),
     ...(options.includeTrashed ? { includeTrashed: true } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   const aborted = () => options.signal?.aborted === true;
   const ids = plan.assets.filter((asset) => asset.status === "already-present").map((asset) => asset.id);

@@ -33,8 +33,9 @@ function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export async function checkInstance(instance: Instance): Promise<InstanceCheck> {
-  const opts = requestOpts(instance);
+/** With a `signal`, aborting it cancels the request in flight; the check then reports the failed stage. */
+export async function checkInstance(instance: Instance, signal?: AbortSignal): Promise<InstanceCheck> {
+  const opts = { ...requestOpts(instance), ...(signal ? { signal } : {}) };
   const result: InstanceCheck = {
     alias: instance.alias,
     ok: false,

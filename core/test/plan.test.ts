@@ -308,3 +308,56 @@ describe("planTransfer metadataSync option", () => {
     await expect(planTransfer(options(source, target, { metadataSync: { includeAlbums: true } }))).rejects.toThrow("album.read");
   });
 });
+
+describe("planTransfer cancellation", () => {
+  const cancelled = { name: "AbortError" };
+  const searches = (server: ReturnType<typeof fake>) => server.requests.filter((r) => r.path === "/api/search/metadata");
+
+  test("an already-aborted signal stops before any request", async () => {
+    const source = fake({ assets: [asset("a")] });
+    const target = fake();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(planTransfer(options(source, target, { signal: controller.signal }))).rejects.toMatchObject(cancelled);
+
+    expect(source.requests).toHaveLength(0);
+    expect(target.requests).toHaveLength(0);
+  });
+
+  test("cancelling during source discovery ends as cancelled, not as a discovery failure, and the target is never searched", async () => {
+    const controller = new AbortController();
+    const source = fake({ assets: [asset("a"), asset("b")], onMetadataSearch: () => controller.abort() });
+    const target = fake();
+
+    await expect(planTransfer(options(source, target, { signal: controller.signal }))).rejects.toMatchObject(cancelled);
+
+    expect(searches(target)).toHaveLength(0);
+  });
+
+  test("cancelling during target lookups stops at once instead of classifying every remaining asset", async () => {
+    const controller = new AbortController();
+    let lookups = 0;
+    const source = fake({ assets: ["a", "b", "c", "d", "e"].map((id) => asset(id)) });
+    const target = fake({
+      onMetadataSearch: (checksum) => {
+        if (!checksum) return;
+        lookups++;
+        controller.abort();
+      },
+    });
+
+    await expect(planTransfer(options(source, target, { signal: controller.signal }))).rejects.toMatchObject(cancelled);
+
+    expect(lookups).toBe(1);
+  });
+
+  test("a signal that is never aborted changes nothing", async () => {
+    const source = fake({ assets: [asset("a")] });
+    const target = fake();
+
+    const plan = await planTransfer(options(source, target, { signal: new AbortController().signal }));
+
+    expect(plan.assets.map((item) => item.status)).toEqual(["would-transfer"]);
+  });
+});

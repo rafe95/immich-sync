@@ -73,3 +73,17 @@ describe("checkInstance", () => {
     expect(r.roles!["target-copy"].missing).toEqual(["asset.upload"]);
   });
 });
+
+describe("checkInstance cancellation", () => {
+  test("an aborted signal stops the check without reaching the server", async () => {
+    const f = fake();
+    const controller = new AbortController();
+    controller.abort();
+
+    const r = await checkInstance({ alias: "home", apiUrl: f.url, apiKey: f.apiKey }, controller.signal);
+
+    expect(r.ok).toBe(false);
+    expect(r.error?.stage).toBe("ping");
+    expect(f.requests).toHaveLength(0);
+  });
+});
