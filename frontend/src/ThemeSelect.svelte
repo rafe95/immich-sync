@@ -3,10 +3,19 @@
 
   let pref = $state<ThemePref>(loadPref());
 
+  // Several selectors can be on screen (header and Settings); keep them in step.
+  const EVENT = "immich-sync:theme";
+  $effect(() => {
+    const sync = (e: Event) => (pref = (e as CustomEvent<ThemePref>).detail);
+    window.addEventListener(EVENT, sync);
+    return () => window.removeEventListener(EVENT, sync);
+  });
+
   function choose(p: ThemePref) {
     pref = p;
     savePref(p);
     applyPref(p);
+    window.dispatchEvent(new CustomEvent(EVENT, { detail: p }));
   }
 </script>
 
