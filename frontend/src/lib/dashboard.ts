@@ -35,6 +35,27 @@ export function instanceHealth(i: DashboardResponse["instances"][number]): Healt
   return { tone: "ok", label: "Healthy" };
 }
 
+export type SummaryCards = {
+  instances: { total: number; attention: number };
+  running: { count: number; first: { id: string; jobName: string } | null };
+  next: { jobName: string; nextRun: string; timezone: string } | null;
+  week: { runs: number; failed: number };
+};
+
+/** The four values of the dashboard's summary cards. An instance needs attention when its health is anything but ok. */
+export function summaryCards(d: DashboardResponse): SummaryCards {
+  const upcoming = d.nextScheduled
+    .flatMap((s) => (s.nextRun ? [{ jobName: s.jobName, nextRun: s.nextRun, timezone: s.timezone }] : []))
+    .sort((a, b) => new Date(a.nextRun).getTime() - new Date(b.nextRun).getTime());
+  const first = d.running[0];
+  return {
+    instances: { total: d.instances.length, attention: d.instances.filter((i) => instanceHealth(i).tone !== "ok").length },
+    running: { count: d.running.length, first: first ? { id: first.id, jobName: first.jobName } : null },
+    next: upcoming[0] ?? null,
+    week: { runs: d.stats.runsLast7Days, failed: d.stats.failedLast7Days },
+  };
+}
+
 export const checkError = (i: DashboardResponse["instances"][number]): string | null => {
   const e = i.lastCheck?.error;
   return !e ? null : typeof e === "string" ? e : e.message;
