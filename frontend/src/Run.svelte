@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import OperationPicker from "./OperationPicker.svelte";
+  import Segmented from "./ui/Segmented.svelte";
   import RunSidePanels from "./RunSidePanels.svelte";
   import RunView from "./RunView.svelte";
   import { ApiError, type Instance } from "./lib/api.ts";
   import { api } from "./lib/session.svelte.ts";
   import { buildRunBody, defaultForm, formFromRun, operationLabel, type Run, type RunForm } from "./lib/runs.ts";
+
+  const RANGE_OPTIONS = [{ value: "all", label: "All assets" }, { value: "window", label: "Date window" }] as const;
 
   let { activeRunId = $bindable(null), prefill = null }: { activeRunId: string | null; prefill: RunForm | null } = $props();
 
@@ -141,10 +144,7 @@
 
         <fieldset class="space-y-2">
           <legend class="label-text">Date taken</legend>
-          <div class="flex flex-wrap gap-4">
-            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range" value="all" bind:group={form.rangeMode} /> All assets</label>
-            <label class="flex items-center gap-2"><input class="radio" type="radio" name="range" value="window" bind:group={form.rangeMode} /> Date window</label>
-          </div>
+          <Segmented options={RANGE_OPTIONS} value={form.rangeMode} name="range" ariaLabel="Date taken" onchange={(v) => (form.rangeMode = v)} />
           {#if form.rangeMode === "window"}
             <div class="grid gap-4 sm:grid-cols-2">
               <label class="label"><span class="label-text">From (optional)</span><input class="input" type="date" bind:value={form.from} /></label>
