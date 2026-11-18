@@ -22,6 +22,10 @@ export function startTestServer(overrides: {
   store?: InstanceStore;
   sessions?: SessionStore;
   limiter?: LoginRateLimiter;
+  /** Request limiter for admin password recovery. */
+  recoveryLimiter?: LoginRateLimiter;
+  /** Receives backend log lines from admin password recovery (default: console.log). */
+  recoveryLog?: (line: string) => void;
   secureCookies?: boolean | "auto";
   trustProxy?: boolean;
   users?: UserStore;
@@ -54,6 +58,8 @@ export function startTestServer(overrides: {
       users,
       sessions: overrides.sessions ?? memorySessionStore(),
       limiter: overrides.limiter,
+      recoveryLimiter: overrides.recoveryLimiter,
+      log: overrides.recoveryLog,
       secureCookies: overrides.secureCookies,
     },
     instances: { store, secretKey: SECRET, ...overrides.instances },

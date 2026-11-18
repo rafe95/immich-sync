@@ -40,7 +40,7 @@ export function createServer(deps: ServerDeps) {
   const dashboard = createDashboardRoutes(deps.dashboard);
   const settings = createSettingsRoutes(deps.settings);
   const clientKey = (req: Request): string => clientKeyFor(req, server.requestIP(req)?.address, deps.trustProxy ?? false);
-  // Every /api route except health, setup status/setup and login goes through auth.protect (session + CSRF).
+  // Every /api route except health, setup status/setup, login and password recovery goes through auth.protect (session + CSRF).
   const p = auth.protect;
   const admin = auth.protectAdmin;
 
@@ -60,6 +60,8 @@ export function createServer(deps: ServerDeps) {
       "/api/auth/logout": { POST: auth.logout },
       "/api/auth/me": { GET: auth.me },
       "/api/auth/password": { POST: auth.changePassword(clientKey) },
+      "/api/auth/recovery": { POST: (req) => auth.requestRecovery(req, clientKey(req)) },
+      "/api/auth/recovery/complete": { POST: (req) => auth.completeRecovery(req, clientKey(req)) },
       "/api/users": { GET: admin(users.list), POST: admin(users.create) },
       "/api/users/:id": {
         PATCH: admin(users.update),

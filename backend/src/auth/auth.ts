@@ -9,6 +9,7 @@ import { LoginRateLimiter } from "./rate-limit.ts";
 import { ownerWritesFor, type OwnerWriteContext } from "./owner-writes.ts";
 import { memoryUserStore, passwordProblem, normalizeUsername, userView, usernameProblem, type User, type UserStore } from "./users.ts";
 import { hashToken, newToken, SESSION_TTL_MS, type Session, type SessionStore } from "./sessions.ts";
+import { createRecoveryTokens, logSafeUsername, type RecoveryTokens } from "./recovery.ts";
 
 export const SESSION_COOKIE = "immich_sync_session";
 export const CSRF_HEADER = "x-csrf-token";
@@ -45,8 +46,17 @@ export type AuthOptions = {
   /** "auto": Secure when the request arrived over HTTPS (directly or via X-Forwarded-Proto). */
   secureCookies?: boolean | "auto";
   limiter?: LoginRateLimiter;
+  /** Admin password recovery tokens (default: a fresh in-memory store). */
+  recovery?: RecoveryTokens;
+  /** Throttles recovery token requests per client key; every request counts. */
+  recoveryLimiter?: LoginRateLimiter;
+  /** Backend log for recovery lines, which carry the token (default: console.log). */
+  log?: (line: string) => void;
   now?: () => Date;
 };
+
+const RECOVERY_ACCEPTED = { message: "If that is an administrator account, a reset token was written to the backend log." };
+const RECOVERY_INVALID = { message: "The reset token is invalid or has expired." };
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -73,6 +83,9 @@ export function createAuth(options: AuthOptions) {
   const now = options.now ?? (() => new Date());
   const users = options.users ?? memoryUserStore();
   const writes = ownerWritesFor(users);
+  const recovery = options.recovery ?? createRecoveryTokens({ now });
+  const recoveryLimiter = options.recoveryLimiter ?? new LoginRateLimiter();
+  const log = options.log ?? ((line: string) => console.log(line));
   // Verified for unknown usernames so a login attempt takes about as long either way.
   let dummyHash: Promise<string> | null = null;
   const secureMode = options.secureCookies ?? "auto";
@@ -228,11 +241,86 @@ export function createAuth(options: AuthOptions) {
       const nextHash = await hashPassword(next);
       return ctx.write(async () => {
         await users.update(ctx.user.id, { hash: nextHash });
+        recovery.clear(ctx.user.id);
         // End all of this user's sessions, including this one, and hand back a fresh token and CSRF secret.
         await sessions.deleteForUser(ctx.user.id);
         return startSession(req, ctx.user);
       });
     });
+
+  /**
+   * Public and CSRF-exempt. Writes a one-time token for an administrator to the backend log: reading the log is the
+   * operator's proof of access. Answers the same for every username, so it reveals nothing about accounts.
+   */
+  const requestRecovery = async (req: Request, clientKey: string): Promise<Response> => {
+    const wait = recoveryLimiter.retryAfterSeconds(clientKey);
+    if (wait > 0) return tooMany(wait);
+    recoveryLimiter.recordFailure(clientKey); // every request counts, so the log cannot be flooded
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(req);
+    } catch (err) {
+      if (err instanceof HttpError) return errorResponse(err);
+      throw err;
+    }
+    const raw = typeof body.username === "string" ? body.username : "";
+    const name = logSafeUsername(raw);
+    const found = raw.trim() ? await users.getCredentials(normalizeUsername(raw)) : null;
+    if (!found || found.user.role !== "admin" || found.user.deletingAt) {
+      log(`[recovery] Reset requested for "${name}": not an administrator, no token issued.`);
+      return json(RECOVERY_ACCEPTED, 202);
+    }
+    const result = recovery.issue(found.user.id);
+    if (result.issued) {
+      log(`[recovery] Password reset token for administrator "${name}": ${result.token} (valid until ${result.expiresAt.toISOString()})`);
+    } else {
+      log(`[recovery] A reset token for "${name}" is already active until ${result.activeUntil.toISOString()}; use that one.`);
+    }
+    return json(RECOVERY_ACCEPTED, 202);
+  };
+
+  /** Public and CSRF-exempt. Sets a new password with a logged token, ends the user's sessions and signs in. */
+  const completeRecovery = async (req: Request, clientKey: string): Promise<Response> => {
+    const wait = limiter.retryAfterSeconds(clientKey);
+    if (wait > 0) return tooMany(wait);
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(req);
+      // Checked before the token is used, so a weak password does not burn the token.
+      const problem = passwordProblem(body.newPassword);
+      if (problem) throw new HttpError(400, problem);
+    } catch (err) {
+      if (err instanceof HttpError) return errorResponse(err);
+      throw err;
+    }
+    const invalid = () => {
+      limiter.recordFailure(clientKey);
+      return json(RECOVERY_INVALID, 400);
+    };
+    const userId = recovery.consume(typeof body.token === "string" ? body.token : "");
+    if (!userId) return invalid();
+    const user = await users.get(userId);
+    if (!user || user.role !== "admin" || user.deletingAt) return invalid();
+    const nextHash = await hashPassword(body.newPassword as string);
+    try {
+      const res = await writes.write(user.id, async () => {
+        const current = await users.get(user.id);
+        return !!current && current.role === "admin" && !current.deletingAt;
+      }, async () => {
+        await users.update(user.id, { hash: nextHash });
+        recovery.clear(user.id);
+        await sessions.deleteForUser(user.id);
+        await users.touchLogin(user.id, now());
+        return startSession(req, user);
+      });
+      limiter.recordSuccess(clientKey);
+      log(`[recovery] Password for "${logSafeUsername(user.username)}" was reset.`);
+      return res;
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 409) return invalid();
+      throw err;
+    }
+  };
 
   const logout = protect(async (req) => {
     await sessions.delete(hashToken(readCookie(req, SESSION_COOKIE)!));
@@ -241,7 +329,7 @@ export function createAuth(options: AuthOptions) {
 
   const me = protect((_req, ctx) => json({ authenticated: true, csrfToken: ctx.csrfToken, user: userView(ctx.user) }));
 
-  return { protect, protectAdmin, setup, setupStatus, login, logout, me, changePassword, users, sessions };
+  return { protect, protectAdmin, setup, setupStatus, login, logout, me, changePassword, requestRecovery, completeRecovery, users, sessions };
 }
 
 export type Auth = ReturnType<typeof createAuth>;
