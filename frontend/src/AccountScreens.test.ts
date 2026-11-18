@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { byText, flush, render, settle, useDom } from "../test/dom.ts";
+import { byText, flush, render, settle, type, useDom } from "../test/dom.ts";
 
 useDom();
 
@@ -112,5 +112,70 @@ describe("Login and Setup screens", () => {
     expect(setup.querySelector("h1")?.textContent).toBe("Set up Immich Sync");
     expect(setup.querySelectorAll("input[type=password]")).toHaveLength(2);
     expect(byText(setup, "button", "Create administrator account")).toBeTruthy();
+  });
+});
+
+describe("Admin password recovery", () => {
+  const message = "If that is an administrator account, a reset token was written to the backend log.";
+  const click = (el: HTMLElement) => {
+    el.click();
+    flush();
+  };
+  const input = (root: ParentNode, label: string) => byText(root, "label span", label).closest("label")!.querySelector("input")!;
+
+  async function toResetStep() {
+    routes["POST /api/auth/recovery"] = { message };
+    const root = render(Login, {});
+    click(byText(root, "button", "Forgot admin password?"));
+    expect(root.querySelector("h1")?.textContent).toBe("Reset admin password");
+    type(input(root, "Username"), " ada ");
+    click(byText(root, "button", "Send reset token"));
+    await settle();
+    return root;
+  }
+
+  test("the forgot link shows the request step, then the reset step", async () => {
+    const root = await toResetStep();
+    expect(calls).toEqual([{ method: "POST", url: "/api/auth/recovery" }]);
+    expect(root.textContent).toContain(message);
+    expect(root.textContent).toContain("docker compose logs app");
+    expect(input(root, "Reset token")).toBeTruthy();
+    expect(input(root, "New password").getAttribute("autocomplete")).toBe("new-password");
+    expect(input(root, "Confirm new password")).toBeTruthy();
+  });
+
+  test("a mismatched confirmation is refused in the browser", async () => {
+    const root = await toResetStep();
+    type(input(root, "Reset token"), "tok");
+    type(input(root, "New password"), "a brand new password");
+    type(input(root, "Confirm new password"), "a different password");
+    click(byText(root, "button", "Set new password"));
+    await settle();
+    expect(root.querySelector("[role=alert]")?.textContent).toContain("The passwords do not match.");
+    expect(calls.some((c) => c.url === "/api/auth/recovery/complete")).toBe(false);
+  });
+
+  test("a successful reset signs in", async () => {
+    const { session } = await import("./lib/session.svelte.ts");
+    session.status = "anonymous" as typeof session.status;
+    routes["POST /api/auth/recovery/complete"] = { authenticated: true, csrfToken: "c", user: { id: "1", username: "ada", role: "admin" } };
+    const root = await toResetStep();
+    type(input(root, "Reset token"), "tok");
+    type(input(root, "New password"), "a brand new password");
+    type(input(root, "Confirm new password"), "a brand new password");
+    click(byText(root, "button", "Set new password"));
+    await settle();
+    expect(calls.filter((c) => c.url === "/api/auth/recovery/complete")).toHaveLength(1);
+    expect(session.status).toBe("authenticated");
+    expect(session.user?.username).toBe("ada");
+  });
+
+  test("the reset step is reachable directly and back to sign in returns to the login form", async () => {
+    const root = render(Login, {});
+    click(byText(root, "button", "Forgot admin password?"));
+    click(byText(root, "button", "I already have a token"));
+    expect(input(root, "Reset token")).toBeTruthy();
+    click(byText(root, "button", "Back to sign in"));
+    expect(root.querySelector("h1")?.textContent).toBe("Sign in");
   });
 });
