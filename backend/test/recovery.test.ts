@@ -116,7 +116,15 @@ describe("admin password recovery", () => {
     await t.request('x\n[recovery] Password reset token for administrator "admin": fake (valid until z)');
     expect(t.lines).toHaveLength(1);
     expect(t.lines[0]).not.toContain("\n");
-    expect(t.lines[0]).toStartWith('[recovery] Reset requested for "x[recovery]');
+    expect(t.lines[0]).toStartWith('[recovery] Reset requested for an invalid username "x[recovery]');
+  });
+
+  test("a username that is not a valid username is logged as invalid, not as another account", async () => {
+    const t = await start();
+    const res = await t.request(`${USERNAME.slice(0, 1)}\u0000${USERNAME.slice(1)}`);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual(ACCEPTED);
+    expect(t.lines).toEqual([`[recovery] Reset requested for an invalid username "${USERNAME}": no token issued.`]);
   });
 
   test("wrong tokens back off like failed logins", async () => {

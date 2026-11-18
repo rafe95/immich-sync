@@ -58,7 +58,10 @@ export function createRecoveryTokens(o: { now?: () => Date; ttlMs?: number } = {
   };
 }
 
-/** A username fit for one log line: normalized, no control characters, at most 64 characters. */
+/**
+ * A username fit for one log line: normalized, at most 64 characters, without control and format characters,
+ * Unicode line/paragraph separators or double quotes (none of which a valid username contains).
+ */
 export function logSafeUsername(raw: string): string {
-  return normalizeUsername(raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, "")).slice(0, 64);
+  return normalizeUsername(raw.replace(/[\p{Cc}\p{Cf}\u2028\u2029"]/gu, "")).slice(0, 64);
 }

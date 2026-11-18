@@ -73,4 +73,8 @@ describe("recovery token store", () => {
     expect(safe.startsWith("ada")).toBe(true);
     expect(logSafeUsername("a".repeat(100)).length).toBe(64);
   });
+
+  test("logSafeUsername removes Unicode line separators, format characters and quotes", () => {
+    expect(logSafeUsername('a\u2028b\u2029c\u200bd"e\u0085f')).toBe("abcdef");
+  });
 });

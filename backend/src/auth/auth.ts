@@ -265,7 +265,13 @@ export function createAuth(options: AuthOptions) {
     }
     const raw = typeof body.username === "string" ? body.username : "";
     const name = logSafeUsername(raw);
-    const found = raw.trim() ? await users.getCredentials(normalizeUsername(raw)) : null;
+    // Sanitising can turn an invalid name into a real one ("a\u0000dmin" → "admin"), so an invalid name is logged as
+    // such and never looked up: the log never suggests that another account was asked for.
+    if (usernameProblem(raw)) {
+      log(`[recovery] Reset requested for an invalid username "${name}": no token issued.`);
+      return json(RECOVERY_ACCEPTED, 202);
+    }
+    const found = await users.getCredentials(normalizeUsername(raw));
     if (!found || found.user.role !== "admin" || found.user.deletingAt) {
       log(`[recovery] Reset requested for "${name}": not an administrator, no token issued.`);
       return json(RECOVERY_ACCEPTED, 202);
