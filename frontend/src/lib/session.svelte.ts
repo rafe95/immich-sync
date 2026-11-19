@@ -49,6 +49,13 @@ export async function login(username: string, password: string) {
   session.status = "authenticated";
 }
 
+/** Admin password recovery: sets the new password with a logged token and signs in. */
+export async function completeRecovery(token: string, newPassword: string) {
+  session.user = await api.completeRecovery(token, newPassword);
+  session.error = null;
+  session.status = "authenticated";
+}
+
 export async function setupAdmin(username: string, password: string) {
   session.user = await api.setup(username, password);
   session.needsSetup = false;

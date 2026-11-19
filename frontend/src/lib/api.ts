@@ -95,6 +95,16 @@ export function createApiClient(options: ApiClientOptions = {}) {
       remember(r);
       return r.user ?? null;
     },
+    /** Asks the backend to write an admin password reset token to its log; returns the (constant) answer. */
+    async requestRecovery(username: string): Promise<string> {
+      return (await request<{ message: string }>("POST", "/api/auth/recovery", { username })).message;
+    },
+    /** Sets a new password with a logged reset token and signs in. */
+    async completeRecovery(token: string, newPassword: string): Promise<SessionUser | null> {
+      const r = await request<AuthResponse>("POST", "/api/auth/recovery/complete", { token, newPassword });
+      remember(r);
+      return r.user ?? null;
+    },
     getSetupStatus: async () => (await request<{ needsSetup: boolean }>("GET", "/api/setup/status")).needsSetup,
     /** Creates the first (admin) account and signs in with it. */
     async setup(username: string, password: string): Promise<SessionUser | null> {
